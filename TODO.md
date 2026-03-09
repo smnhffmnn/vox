@@ -1,7 +1,17 @@
 # vox — Speech-to-Text Tool für Linux
 
 ## Vision
-WisprFlow-ähnliche Erfahrung auf Linux: Sprechen → sauberer Text im aktiven Fenster.
+
+Systemweites Diktiertool für Linux (wie WisprFlow auf macOS). vox läuft als
+Hintergrund-Daemon (System-Tray) und wird per globalem Hotkey gesteuert:
+
+1. Hotkey drücken → Aufnahme startet (Push-to-Talk solange gehalten, oder Toggle-Modus)
+2. Hotkey loslassen / erneut drücken → Aufnahme stoppt
+3. Audio wird transkribiert (Whisper) und per LLM bereinigt (Interpunktion, Fachbegriffe, Füllwörter)
+4. Der fertige Text wird **direkt in das aktuell fokussierte Texteingabefeld eingefügt** — egal ob Browser, Chat-App, Mail-Client, Terminal, IDE, etc.
+
+Der User muss nichts kopieren, kein Fenster wechseln, nichts einfügen. Hotkey →
+Sprechen → Text erscheint. Das ist das Zielerlebnis.
 
 ## Architektur-Entscheidungen
 
