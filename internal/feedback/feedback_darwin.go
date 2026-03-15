@@ -4,6 +4,7 @@ package feedback
 
 import (
 	"os/exec"
+	"time"
 )
 
 const (
@@ -19,4 +20,13 @@ func PlayStart() {
 // PlayStop plays the recording-stop sound in the background.
 func PlayStop() {
 	go exec.Command("afplay", stopSound).Run()
+}
+
+// PlayHandsfreeStart plays a double beep to indicate hands-free mode activation.
+func PlayHandsfreeStart() {
+	go func() {
+		exec.Command("afplay", startSound).Run()
+		time.Sleep(150 * time.Millisecond)
+		exec.Command("afplay", startSound).Run()
+	}()
 }

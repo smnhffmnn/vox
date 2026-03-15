@@ -486,6 +486,18 @@
             </select>
           </div>
         </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Hands-Free Timeout (seconds)</label>
+            <input type="number" id="cfg-handsfree_timeout" min="0" step="1" placeholder="360">
+            <div class="field-hint">0 = no limit. Default: 360 (6 min). Double-tap hotkey to activate.</div>
+          </div>
+          <div class="field">
+            <label>Double-Tap Window (ms)</label>
+            <input type="number" id="cfg-doubletap_window" min="100" max="1000" step="50" placeholder="400">
+            <div class="field-hint">Time window for double-tap detection. Default: 400ms</div>
+          </div>
+        </div>
         <div class="toggle-row">
           <span class="toggle-label">Notifications</span>
           <label class="toggle"><input type="checkbox" id="cfg-notifications"><span class="slider"></span></label>
@@ -674,6 +686,8 @@ function populateConfig(c) {
   setValue('cfg-output', c.output);
   setValue('cfg-hotkey', c.hotkey);
   setValue('cfg-mode', c.mode);
+  setValue('cfg-handsfree_timeout', c.handsfree_timeout || 360);
+  setValue('cfg-doubletap_window', c.doubletap_window || 400);
   setChecked('cfg-notifications', c.notifications);
   setChecked('cfg-audio_feedback', c.audio_feedback);
   setValue('cfg-stt_backend', c.stt_backend || 'openai');
@@ -701,6 +715,8 @@ async function saveConfig() {
     output: document.getElementById('cfg-output').value,
     hotkey: document.getElementById('cfg-hotkey').value,
     mode: document.getElementById('cfg-mode').value,
+    handsfree_timeout: parseInt(document.getElementById('cfg-handsfree_timeout').value) || 360,
+    doubletap_window: parseInt(document.getElementById('cfg-doubletap_window').value) || 400,
     notifications: document.getElementById('cfg-notifications').checked,
     audio_feedback: document.getElementById('cfg-audio_feedback').checked,
     stt_backend: document.getElementById('cfg-stt_backend').value,

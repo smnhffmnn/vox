@@ -246,10 +246,24 @@ func runDaemon() {
 		recording   *audio.Recording
 		recordingMu sync.Mutex
 		isRecording bool
+
+		// Hands-free state
+		handsfreeActive bool
+		handsfreeTimer  *time.Timer
+		handsfreeDone   chan struct{}
+
+		// Double-tap detection
+		lastPressTime    time.Time
+		lastReleaseTime  time.Time
+		doubletapTimer   *time.Timer
+		doubletapPending bool
 	)
 
 	toggleMode := cfg.Mode == "toggle"
 	var toggleState bool
+
+	doubletapWindow := time.Duration(cfg.DoubletapWindow) * time.Millisecond
+	handsfreeTimeout := time.Duration(cfg.HandsfreeTimeout) * time.Second
 
 	setUIState := func(state string) {
 		if uiServer != nil {
@@ -257,38 +271,11 @@ func runDaemon() {
 		}
 	}
 
-	onPress := func() {
-		recordingMu.Lock()
-		defer recordingMu.Unlock()
-
-		if toggleMode {
-			if toggleState {
-				toggleState = false
-				if recording != nil {
-					if pcfg.audioFeedback {
-						feedback.PlayStop()
-					}
-					t.SetState(tray.StateProcessing)
-					t.SetStatus("Processing...")
-					setUIState("processing")
-					gen := recordingGen.Add(1)
-					go handleStopAndProcess(ctx, recording, pcfg, gen)
-					recording = nil
-					isRecording = false
-				}
-				return
-			}
-			toggleState = true
-		}
-
-		if isRecording {
-			return
-		}
-
+	// startRec starts a new audio recording. Must be called with recordingMu held.
+	startRec := func() {
 		if pcfg.audioFeedback {
 			feedback.PlayStart()
 		}
-
 		rec, err := audio.Start()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "vox: Aufnahme starten: %v\n", err)
@@ -305,18 +292,8 @@ func runDaemon() {
 		fmt.Fprintln(os.Stderr, "Recording...")
 	}
 
-	onRelease := func() {
-		if toggleMode {
-			return
-		}
-
-		recordingMu.Lock()
-		defer recordingMu.Unlock()
-
-		if !isRecording || recording == nil {
-			return
-		}
-
+	// stopAndProcess stops the current recording and processes it. Must be called with recordingMu held.
+	stopAndProcess := func() {
 		if pcfg.audioFeedback {
 			feedback.PlayStop()
 		}
@@ -329,7 +306,260 @@ func runDaemon() {
 		isRecording = false
 	}
 
-	fmt.Fprintf(os.Stderr, "vox daemon gestartet (hotkey: %s, mode: %s)\n", cfg.Hotkey, cfg.Mode)
+	// stopAndDiscard stops the current recording and discards it. Must be called with recordingMu held.
+	stopAndDiscard := func() {
+		if recording != nil {
+			r := recording
+			recording = nil
+			isRecording = false
+			go func() {
+				if f, _, err := r.Stop(); err == nil {
+					os.Remove(f)
+				}
+			}()
+		}
+		t.SetState(tray.StateIdle)
+		t.SetStatus("Idle")
+		setUIState("idle")
+	}
+
+	// startHandsfree enters hands-free continuous recording mode. Must be called with recordingMu held.
+	startHandsfree := func() {
+		handsfreeActive = true
+		toggleState = false
+
+		if pcfg.audioFeedback {
+			feedback.PlayHandsfreeStart()
+		}
+
+		if !isRecording {
+			rec, err := audio.Start()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "vox: Aufnahme starten: %v\n", err)
+				handsfreeActive = false
+				t.SetState(tray.StateIdle)
+				t.SetStatus("Error: recording failed")
+				setUIState("idle")
+				return
+			}
+			recording = rec
+			isRecording = true
+		}
+
+		t.SetState(tray.StateRecording)
+		setUIState("recording")
+		fmt.Fprintln(os.Stderr, "Recording (Hands-Free)...")
+
+		handsfreeDone = make(chan struct{})
+
+		if handsfreeTimeout > 0 {
+			deadline := time.Now().Add(handsfreeTimeout)
+			rem := handsfreeTimeout
+			t.SetStatus(fmt.Sprintf("Recording (Hands-Free) — %d:%02d remaining",
+				int(rem.Minutes()), int(rem.Seconds())%60))
+
+			go func(done chan struct{}, dl time.Time) {
+				ticker := time.NewTicker(time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-done:
+						return
+					case <-ticker.C:
+						r := time.Until(dl)
+						if r < 0 {
+							r = 0
+						}
+						t.SetStatus(fmt.Sprintf("Recording (Hands-Free) — %d:%02d remaining",
+							int(r.Minutes()), int(r.Seconds())%60))
+					}
+				}
+			}(handsfreeDone, deadline)
+
+			handsfreeTimer = time.AfterFunc(handsfreeTimeout, func() {
+				recordingMu.Lock()
+				defer recordingMu.Unlock()
+
+				if !handsfreeActive {
+					return
+				}
+
+				handsfreeActive = false
+				if handsfreeDone != nil {
+					close(handsfreeDone)
+					handsfreeDone = nil
+				}
+
+				fmt.Fprintln(os.Stderr, "Hands-Free timeout reached, stopping...")
+
+				if isRecording && recording != nil {
+					stopAndProcess()
+				}
+
+				if pcfg.notifications {
+					notify.Send("vox", fmt.Sprintf("Hands-Free recording stopped after %d:%02d",
+						int(handsfreeTimeout.Minutes()), int(handsfreeTimeout.Seconds())%60))
+				}
+			})
+		} else {
+			t.SetStatus("Recording (Hands-Free)")
+		}
+	}
+
+	// stopHandsfree exits hands-free mode and processes the recording. Must be called with recordingMu held.
+	stopHandsfree := func() {
+		handsfreeActive = false
+		toggleState = false
+
+		if handsfreeTimer != nil {
+			handsfreeTimer.Stop()
+			handsfreeTimer = nil
+		}
+
+		if handsfreeDone != nil {
+			close(handsfreeDone)
+			handsfreeDone = nil
+		}
+
+		if isRecording && recording != nil {
+			stopAndProcess()
+		}
+	}
+
+	onPress := func() {
+		recordingMu.Lock()
+		defer recordingMu.Unlock()
+
+		now := time.Now()
+
+		if toggleMode {
+			// === TOGGLE MODE ===
+			if handsfreeActive {
+				// During hands-free: check for double-tap exit
+				if doubletapPending {
+					doubletapPending = false
+					if doubletapTimer != nil {
+						doubletapTimer.Stop()
+					}
+					stopHandsfree()
+				}
+				return
+			}
+
+			// Check for double-tap to enter hands-free
+			if doubletapPending {
+				doubletapPending = false
+				if doubletapTimer != nil {
+					doubletapTimer.Stop()
+				}
+				startHandsfree()
+				return
+			}
+
+			// First press; action deferred to onRelease timer
+			return
+		}
+
+		// === HOLD MODE ===
+		if handsfreeActive {
+			// During hands-free: check for double-tap exit
+			if !lastReleaseTime.IsZero() && now.Sub(lastReleaseTime) < doubletapWindow {
+				stopHandsfree()
+				return
+			}
+			lastPressTime = now
+			return
+		}
+
+		// Check for double-tap to enter hands-free
+		if !lastReleaseTime.IsZero() && now.Sub(lastReleaseTime) < doubletapWindow && !isRecording {
+			startHandsfree()
+			return
+		}
+
+		if isRecording {
+			return
+		}
+
+		lastPressTime = now
+		startRec()
+	}
+
+	onRelease := func() {
+		recordingMu.Lock()
+		defer recordingMu.Unlock()
+
+		now := time.Now()
+
+		if toggleMode {
+			// === TOGGLE MODE ===
+			doubletapPending = true
+			if doubletapTimer != nil {
+				doubletapTimer.Stop()
+			}
+
+			if handsfreeActive {
+				// During hands-free: timer for exit detection
+				doubletapTimer = time.AfterFunc(doubletapWindow, func() {
+					recordingMu.Lock()
+					defer recordingMu.Unlock()
+					if !doubletapPending {
+						return
+					}
+					doubletapPending = false
+					// Single tap during hands-free: ignore
+				})
+				return
+			}
+
+			// Deferred toggle action
+			capturedToggleState := toggleState
+			doubletapTimer = time.AfterFunc(doubletapWindow, func() {
+				recordingMu.Lock()
+				defer recordingMu.Unlock()
+				if !doubletapPending {
+					return
+				}
+				doubletapPending = false
+
+				if capturedToggleState {
+					// Was recording → stop
+					toggleState = false
+					if recording != nil {
+						stopAndProcess()
+					}
+				} else {
+					// Was idle → start
+					toggleState = true
+					startRec()
+				}
+			})
+			return
+		}
+
+		// === HOLD MODE ===
+		if handsfreeActive {
+			lastReleaseTime = now
+			return
+		}
+
+		if !isRecording || recording == nil {
+			return
+		}
+
+		pressDuration := now.Sub(lastPressTime)
+		if pressDuration < 300*time.Millisecond {
+			// Short tap: discard recording, remember for double-tap detection
+			stopAndDiscard()
+			lastReleaseTime = now
+			return
+		}
+
+		// Normal hold release: process
+		stopAndProcess()
+	}
+
+	fmt.Fprintf(os.Stderr, "vox daemon gestartet (hotkey: %s, mode: %s, doubletap: %dms)\n", cfg.Hotkey, cfg.Mode, cfg.DoubletapWindow)
 
 	// Handle SIGINT/SIGTERM for graceful shutdown
 	sigCh := make(chan os.Signal, 1)
@@ -355,8 +585,26 @@ func runDaemon() {
 	go func() {
 		<-ctx.Done()
 
-		// Stop active recording and clean up temp file
 		recordingMu.Lock()
+
+		// Cancel hands-free timers
+		if handsfreeTimer != nil {
+			handsfreeTimer.Stop()
+			handsfreeTimer = nil
+		}
+		if handsfreeDone != nil {
+			close(handsfreeDone)
+			handsfreeDone = nil
+		}
+		handsfreeActive = false
+
+		// Cancel doubletap timer
+		if doubletapTimer != nil {
+			doubletapTimer.Stop()
+		}
+		doubletapPending = false
+
+		// Stop active recording and clean up temp file
 		rec := recording
 		recording = nil
 		isRecording = false

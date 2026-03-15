@@ -16,9 +16,11 @@ type Config struct {
 	Output        string
 	Raw           bool
 	Hotkey        string
-	Mode          string // "hold" or "toggle"
-	Notifications bool
-	AudioFeedback bool
+	Mode             string // "hold" or "toggle"
+	HandsfreeTimeout int    // Hands-free timeout in seconds (0 = no limit)
+	DoubletapWindow  int    // Double-tap detection window in milliseconds
+	Notifications    bool
+	AudioFeedback    bool
 
 	// Backend
 	STTBackend string // "openai" (default) or "local"
@@ -46,8 +48,10 @@ func DefaultConfig() *Config {
 		Output:        "stdout",
 		Raw:           false,
 		Hotkey:        "right_option",
-		Mode:          "hold",
-		Notifications: true,
+		Mode:             "hold",
+		HandsfreeTimeout: 360,
+		DoubletapWindow:  400,
+		Notifications:    true,
 		AudioFeedback: true,
 		STTBackend:    "openai",
 		LLMBackend:    "openai",
@@ -104,6 +108,8 @@ func (cfg *Config) Save() error {
 	b.WriteString(fmt.Sprintf("raw: %v\n", cfg.Raw))
 	b.WriteString(fmt.Sprintf("hotkey: %s\n", cfg.Hotkey))
 	b.WriteString(fmt.Sprintf("mode: %s\n", cfg.Mode))
+	b.WriteString(fmt.Sprintf("handsfree_timeout: %d\n", cfg.HandsfreeTimeout))
+	b.WriteString(fmt.Sprintf("doubletap_window: %d\n", cfg.DoubletapWindow))
 	b.WriteString(fmt.Sprintf("notifications: %v\n", cfg.Notifications))
 	b.WriteString(fmt.Sprintf("audio_feedback: %v\n", cfg.AudioFeedback))
 	b.WriteString("\n# Backend\n")
@@ -148,6 +154,14 @@ func parseConfig(data string, cfg *Config) {
 			cfg.Hotkey = value
 		case "mode":
 			cfg.Mode = value
+		case "handsfree_timeout":
+			if v, err := strconv.Atoi(value); err == nil {
+				cfg.HandsfreeTimeout = v
+			}
+		case "doubletap_window":
+			if v, err := strconv.Atoi(value); err == nil {
+				cfg.DoubletapWindow = v
+			}
 		case "notifications":
 			cfg.Notifications = value == "true"
 		case "audio_feedback":

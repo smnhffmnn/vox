@@ -4,6 +4,7 @@ package feedback
 
 import (
 	"os/exec"
+	"time"
 )
 
 // PlayStart plays the recording-start sound in the background.
@@ -30,6 +31,19 @@ func playStopSound() {
 		"/usr/share/sounds/freedesktop/stereo/dialog-information.oga",
 	}
 	tryPlay(paths)
+}
+
+// PlayHandsfreeStart plays a double beep to indicate hands-free mode activation.
+func PlayHandsfreeStart() {
+	go func() {
+		paths := []string{
+			"/usr/share/sounds/freedesktop/stereo/bell.oga",
+			"/usr/share/sounds/freedesktop/stereo/message.oga",
+		}
+		tryPlay(paths)
+		time.Sleep(150 * time.Millisecond)
+		tryPlay(paths)
+	}()
 }
 
 func tryPlay(paths []string) {

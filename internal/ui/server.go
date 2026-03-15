@@ -105,8 +105,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"output":         s.cfg.Output,
 			"raw":            s.cfg.Raw,
 			"hotkey":         s.cfg.Hotkey,
-			"mode":           s.cfg.Mode,
-			"notifications":  s.cfg.Notifications,
+			"mode":              s.cfg.Mode,
+			"handsfree_timeout": s.cfg.HandsfreeTimeout,
+			"doubletap_window":  s.cfg.DoubletapWindow,
+			"notifications":     s.cfg.Notifications,
 			"audio_feedback": s.cfg.AudioFeedback,
 			"stt_backend":    s.cfg.STTBackend,
 			"stt_url":        s.cfg.STTURL,
@@ -152,6 +154,12 @@ func applyConfigUpdate(cfg *config.Config, body map[string]any) {
 	}
 	if v, ok := body["mode"].(string); ok {
 		cfg.Mode = v
+	}
+	if v, ok := body["handsfree_timeout"].(float64); ok {
+		cfg.HandsfreeTimeout = int(v)
+	}
+	if v, ok := body["doubletap_window"].(float64); ok {
+		cfg.DoubletapWindow = int(v)
 	}
 	if v, ok := body["notifications"].(bool); ok {
 		cfg.Notifications = v
