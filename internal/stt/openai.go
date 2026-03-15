@@ -27,7 +27,7 @@ type whisperResponse struct {
 	Text string `json:"text"`
 }
 
-func (o *OpenAI) Transcribe(audioFile string, language string) (string, error) {
+func (o *OpenAI) Transcribe(audioFile, language, prompt string) (string, error) {
 	f, err := os.Open(audioFile)
 	if err != nil {
 		return "", fmt.Errorf("Audiodatei öffnen: %w", err)
@@ -46,12 +46,14 @@ func (o *OpenAI) Transcribe(audioFile string, language string) (string, error) {
 		return "", err
 	}
 
-	// Model
 	w.WriteField("model", o.model)
 
-	// Language
 	if language != "" {
 		w.WriteField("language", language)
+	}
+
+	if prompt != "" {
+		w.WriteField("prompt", prompt)
 	}
 
 	w.Close()

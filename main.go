@@ -5,10 +5,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/smnhffmnn/vox/internal/audio"
 	"github.com/smnhffmnn/vox/internal/cleanup"
+	"github.com/smnhffmnn/vox/internal/config"
 	"github.com/smnhffmnn/vox/internal/inject"
 	"github.com/smnhffmnn/vox/internal/stt"
 	"github.com/smnhffmnn/vox/internal/windowctx"
@@ -23,6 +25,12 @@ func main() {
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
 		fatal("OPENAI_API_KEY ist nicht gesetzt")
+	}
+
+	// Load dictionary (non-fatal)
+	dictionary, err := config.LoadDictionary()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Dictionary laden fehlgeschlagen: %v\n", err)
 	}
 
 	// Detect window context (non-fatal)
@@ -67,10 +75,11 @@ func main() {
 	defer os.Remove(audioFile)
 	fmt.Fprintf(os.Stderr, "\r  %.1fs aufgenommen\n\n", duration.Seconds())
 
-	// Transcribe
+	// Transcribe (pass dictionary as whisper prompt hint)
 	fmt.Fprintln(os.Stderr, "Transcribing...")
+	whisperPrompt := strings.Join(dictionary, ", ")
 	transcriber := stt.NewOpenAI(apiKey)
-	raw, err := transcriber.Transcribe(audioFile, *lang)
+	raw, err := transcriber.Transcribe(audioFile, *lang, whisperPrompt)
 	if err != nil {
 		fatal("Transkription: %v", err)
 	}
@@ -82,7 +91,7 @@ func main() {
 	if !*noCleanup {
 		fmt.Fprintln(os.Stderr, "Cleaning up...")
 		cleaner := cleanup.NewCleaner(apiKey)
-		cleaned, err := cleaner.Cleanup(raw, *lang, ctx, nil)
+		cleaned, err := cleaner.Cleanup(raw, *lang, ctx, dictionary)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Cleanup fehlgeschlagen, verwende Rohtext: %v\n", err)
 		} else {
