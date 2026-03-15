@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>vox — Settings</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #242835;
+    --border: #2e3345;
+    --text: #e1e4ed;
+    --text2: #8b90a0;
+    --accent: #6c7ee1;
+    --accent-hover: #8290f0;
+    --green: #34d399;
+    --yellow: #fbbf24;
+    --red: #f87171;
+    --radius: 10px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  .container { max-width: 800px; margin: 0 auto; padding: 2rem 1.5rem; }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 2rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  header h1 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  header h1 span { color: var(--accent); }
+
+  .server-info {
+    display: flex;
+    gap: 1.5rem;
+    color: var(--text2);
+    font-size: 0.8rem;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+
+  .server-info .value { color: var(--text); }
+
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 0.3rem;
+    vertical-align: middle;
+  }
+
+  .status-dot.green { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .status-dot.yellow { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+  .status-dot.red { background: var(--red); box-shadow: 0 0 6px var(--red); }
+  .status-dot.gray { background: var(--text2); }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1.5rem;
+  }
+
+  .tab {
+    padding: 0.6rem 1.2rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text2);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: color 0.2s, border-color 0.2s;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    user-select: none;
+  }
+
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* Cards */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 1.25rem;
+    overflow: hidden;
+  }
+
+  .card-header {
+    padding: 0.75rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text2);
+  }
+
+  .card-body { padding: 1.25rem; }
+
+  /* Fields */
+  .field {
+    margin-bottom: 0.85rem;
+  }
+
+  .field label {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text2);
+    margin-bottom: 0.3rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .field input, .field select {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.85rem;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .field input:focus, .field select:focus, .field textarea:focus {
+    border-color: var(--accent);
+  }
+
+  .field textarea {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.85rem;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    outline: none;
+    transition: border-color 0.2s;
+    resize: vertical;
+    min-height: 8rem;
+  }
+
+  .field-row {
+    display: flex;
+    gap: 1rem;
+  }
+
+  .field-row .field { flex: 1; }
+
+  .field-hint {
+    font-size: 0.7rem;
+    color: var(--text2);
+    margin-top: 0.2rem;
+  }
+
+  /* Toggles */
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+  }
+
+  .toggle-row + .toggle-row {
+    border-top: 1px solid var(--border);
+  }
+
+  .toggle-label {
+    font-size: 0.85rem;
+  }
+
+  .toggle {
+    position: relative;
+    width: 40px;
+    height: 22px;
+    cursor: pointer;
+  }
+
+  .toggle input { display: none; }
+
+  .toggle .slider {
+    position: absolute;
+    inset: 0;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    transition: background 0.2s;
+  }
+
+  .toggle .slider::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    background: var(--text2);
+    border-radius: 50%;
+    transition: transform 0.2s, background 0.2s;
+  }
+
+  .toggle input:checked + .slider { background: var(--accent); border-color: var(--accent); }
+  .toggle input:checked + .slider::after { transform: translateX(18px); background: white; }
+
+  /* Buttons */
+  .btn {
+    padding: 0.45rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+    background: var(--surface2);
+    color: var(--text);
+  }
+
+  .btn:hover { border-color: var(--accent); }
+
+  .btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+  }
+
+  .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+  .btn-danger {
+    color: var(--red);
+    background: transparent;
+    border-color: var(--border);
+  }
+
+  .btn-danger:hover { border-color: var(--red); }
+
+  .btn-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1rem;
+  }
+
+  .btn-row.right { justify-content: flex-end; }
+
+  /* Test result */
+  .test-result {
+    font-size: 0.8rem;
+    padding: 0.4rem 0.75rem;
+    border-radius: 6px;
+    margin-top: 0.5rem;
+    display: none;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+
+  .test-result.ok { display: block; background: #34d39915; color: var(--green); }
+  .test-result.fail { display: block; background: #f8717115; color: var(--red); }
+
+  /* Key status */
+  .key-status {
+    font-size: 0.75rem;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    padding: 0.3rem 0;
+  }
+
+  .key-status.set { color: var(--green); }
+  .key-status.unset { color: var(--red); }
+
+  /* History table */
+  .history-search {
+    margin-bottom: 1rem;
+  }
+
+  .history-search input {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.85rem;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    outline: none;
+  }
+
+  .history-search input:focus { border-color: var(--accent); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+  }
+
+  th {
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--text2);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 0.7rem;
+  }
+
+  td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    max-width: 250px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.78rem;
+  }
+
+  tr { cursor: pointer; transition: background 0.15s; }
+  tr:hover { background: var(--surface2); }
+
+  .copied-toast {
+    position: fixed;
+    bottom: 2rem;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--accent);
+    color: white;
+    padding: 0.5rem 1.2rem;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+    z-index: 100;
+  }
+
+  .copied-toast.show { opacity: 1; }
+
+  /* Snippets */
+  .snippet-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 0;
+  }
+
+  .snippet-item + .snippet-item { border-top: 1px solid var(--border); }
+
+  .snippet-item input {
+    flex: 1;
+    padding: 0.4rem 0.6rem;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.8rem;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    outline: none;
+  }
+
+  .snippet-item input:focus { border-color: var(--accent); }
+  .snippet-item .trigger { max-width: 140px; }
+
+  .snippet-remove {
+    background: none;
+    border: none;
+    color: var(--text2);
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 0.2rem 0.4rem;
+  }
+
+  .snippet-remove:hover { color: var(--red); }
+
+  /* Status section */
+  .status-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.4rem 1.5rem;
+    font-size: 0.85rem;
+  }
+
+  .status-label { color: var(--text2); font-weight: 500; }
+  .status-value { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.8rem; }
+
+  /* Responsive */
+  @media (max-width: 600px) {
+    .container { padding: 1rem; }
+    header { flex-direction: column; gap: 0.75rem; align-items: flex-start; }
+    .field-row { flex-direction: column; gap: 0; }
+    .tabs { overflow-x: auto; }
+    td { max-width: 120px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1><span>vox</span> Settings</h1>
+    <div class="server-info">
+      <span><span class="status-dot gray" id="status-dot"></span> <span class="value" id="status-state">...</span></span>
+      <span>uptime <span class="value" id="status-uptime">...</span></span>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="general">General</div>
+    <div class="tab" data-tab="backend">API & Backend</div>
+    <div class="tab" data-tab="dictionary">Dictionary</div>
+    <div class="tab" data-tab="snippets">Snippets</div>
+    <div class="tab" data-tab="history">History</div>
+    <div class="tab" data-tab="status">Status</div>
+  </div>
+
+  <!-- General Settings -->
+  <div class="tab-content active" id="tab-general">
+    <div class="card">
+      <div class="card-header">General Settings</div>
+      <div class="card-body">
+        <div class="field-row">
+          <div class="field">
+            <label>Language</label>
+            <select id="cfg-language">
+              <option value="de">Deutsch (de)</option>
+              <option value="en">English (en)</option>
+              <option value="fr">Francais (fr)</option>
+              <option value="es">Espanol (es)</option>
+              <option value="nl">Nederlands (nl)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Output Method</label>
+            <select id="cfg-output">
+              <option value="stdout">stdout</option>
+              <option value="clipboard">clipboard</option>
+              <option value="wtype">wtype / keystroke</option>
+              <option value="ydotool">ydotool</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Hotkey</label>
+            <select id="cfg-hotkey">
+              <option value="right_option">Right Option / Alt</option>
+              <option value="right_alt">Right Alt</option>
+              <option value="f13">F13</option>
+              <option value="f14">F14</option>
+              <option value="f15">F15</option>
+              <option value="f16">F16</option>
+              <option value="f17">F17</option>
+              <option value="f18">F18</option>
+              <option value="f19">F19</option>
+              <option value="f20">F20</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Mode</label>
+            <select id="cfg-mode">
+              <option value="hold">Hold to talk</option>
+              <option value="toggle">Toggle (press start/stop)</option>
+            </select>
+          </div>
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-label">Notifications</span>
+          <label class="toggle"><input type="checkbox" id="cfg-notifications"><span class="slider"></span></label>
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-label">Audio Feedback</span>
+          <label class="toggle"><input type="checkbox" id="cfg-audio_feedback"><span class="slider"></span></label>
+        </div>
+        <div class="btn-row right">
+          <button class="btn btn-primary" onclick="saveConfig()">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- API & Backend -->
+  <div class="tab-content" id="tab-backend">
+    <div class="card">
+      <div class="card-header">Speech-to-Text</div>
+      <div class="card-body">
+        <div class="field">
+          <label>STT Backend</label>
+          <select id="cfg-stt_backend" onchange="toggleSTTFields()">
+            <option value="openai">OpenAI Whisper</option>
+            <option value="local">Local Whisper</option>
+          </select>
+        </div>
+        <div class="field" id="stt-url-field" style="display:none">
+          <label>Local Whisper URL</label>
+          <input type="text" id="cfg-stt_url" placeholder="http://localhost:8080">
+        </div>
+        <div class="btn-row">
+          <button class="btn" onclick="testSTT()">Test STT</button>
+        </div>
+        <div class="test-result" id="stt-result"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">LLM Cleanup</div>
+      <div class="card-body">
+        <div class="field">
+          <label>LLM Backend</label>
+          <select id="cfg-llm_backend" onchange="toggleLLMFields()">
+            <option value="openai">OpenAI</option>
+            <option value="ollama">Ollama (local)</option>
+            <option value="none">None (skip cleanup)</option>
+          </select>
+        </div>
+        <div class="field" id="llm-url-field" style="display:none">
+          <label>Ollama URL</label>
+          <input type="text" id="cfg-llm_url" placeholder="http://localhost:11434/v1">
+        </div>
+        <div class="field" id="llm-model-field">
+          <label>Model</label>
+          <input type="text" id="cfg-llm_model" placeholder="gpt-4o-mini (default)">
+        </div>
+        <div class="btn-row">
+          <button class="btn" onclick="testLLM()">Test LLM</button>
+        </div>
+        <div class="test-result" id="llm-result"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">API Key</div>
+      <div class="card-body">
+        <div class="key-status" id="key-status">Checking...</div>
+        <div class="field">
+          <label>OpenAI API Key</label>
+          <input type="password" id="api-key-input" placeholder="sk-...">
+          <div class="field-hint">Stored in OS keychain, not in config file</div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="saveKey()">Save Key</button>
+          <button class="btn btn-danger" onclick="deleteKey()">Remove Key</button>
+        </div>
+      </div>
+    </div>
+    <div class="btn-row right">
+      <button class="btn btn-primary" onclick="saveConfig()">Save Config</button>
+    </div>
+  </div>
+
+  <!-- Dictionary -->
+  <div class="tab-content" id="tab-dictionary">
+    <div class="card">
+      <div class="card-header">Dictionary</div>
+      <div class="card-body">
+        <div class="field">
+          <label>Words (one per line)</label>
+          <textarea id="dictionary-text" placeholder="Kubernetes&#10;GitHub&#10;MYFIT24"></textarea>
+          <div class="field-hint">These words are sent as hints to Whisper and the LLM cleanup</div>
+        </div>
+        <div class="btn-row right">
+          <button class="btn btn-primary" onclick="saveDictionary()">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Snippets -->
+  <div class="tab-content" id="tab-snippets">
+    <div class="card">
+      <div class="card-header">Snippets</div>
+      <div class="card-body">
+        <div id="snippets-list"></div>
+        <div class="btn-row">
+          <button class="btn" onclick="addSnippet()">+ Add Snippet</button>
+          <div style="flex:1"></div>
+          <button class="btn btn-primary" onclick="saveSnippets()">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- History -->
+  <div class="tab-content" id="tab-history">
+    <div class="history-search">
+      <input type="text" id="history-search" placeholder="Search..." oninput="filterHistory()">
+    </div>
+    <div class="card">
+      <div class="card-body" style="padding:0;overflow-x:auto">
+        <table>
+          <thead>
+            <tr><th>Time</th><th>Duration</th><th>App</th><th>Text</th></tr>
+          </thead>
+          <tbody id="history-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status -->
+  <div class="tab-content" id="tab-status">
+    <div class="card">
+      <div class="card-header">Status</div>
+      <div class="card-body">
+        <div class="status-grid">
+          <span class="status-label">State</span>
+          <span class="status-value" id="detail-state">-</span>
+          <span class="status-label">Uptime</span>
+          <span class="status-value" id="detail-uptime">-</span>
+          <span class="status-label">Port</span>
+          <span class="status-value" id="detail-port">-</span>
+          <span class="status-label">STT Backend</span>
+          <span class="status-value" id="detail-stt">-</span>
+          <span class="status-label">LLM Backend</span>
+          <span class="status-value" id="detail-llm">-</span>
+          <span class="status-label">API Key</span>
+          <span class="status-value" id="detail-key">-</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="copied-toast" id="toast">Copied to clipboard</div>
+
+<script>
+const API = '/api';
+let configData = {};
+let historyData = [];
+
+// Tab switching
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    if (tab.dataset.tab === 'history') loadHistory();
+    if (tab.dataset.tab === 'status') loadStatusDetail();
+  });
+});
+
+// Load config
+async function loadConfig() {
+  try {
+    const res = await fetch(API + '/config');
+    configData = await res.json();
+    populateConfig(configData);
+  } catch(e) { console.error('Config load failed:', e); }
+}
+
+function populateConfig(c) {
+  setValue('cfg-language', c.language);
+  setValue('cfg-output', c.output);
+  setValue('cfg-hotkey', c.hotkey);
+  setValue('cfg-mode', c.mode);
+  setChecked('cfg-notifications', c.notifications);
+  setChecked('cfg-audio_feedback', c.audio_feedback);
+  setValue('cfg-stt_backend', c.stt_backend || 'openai');
+  setValue('cfg-stt_url', c.stt_url || '');
+  setValue('cfg-llm_backend', c.llm_backend || 'openai');
+  setValue('cfg-llm_url', c.llm_url || '');
+  setValue('cfg-llm_model', c.llm_model || '');
+  toggleSTTFields();
+  toggleLLMFields();
+}
+
+function setValue(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.value = val;
+}
+
+function setChecked(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.checked = val;
+}
+
+async function saveConfig() {
+  const body = {
+    language: document.getElementById('cfg-language').value,
+    output: document.getElementById('cfg-output').value,
+    hotkey: document.getElementById('cfg-hotkey').value,
+    mode: document.getElementById('cfg-mode').value,
+    notifications: document.getElementById('cfg-notifications').checked,
+    audio_feedback: document.getElementById('cfg-audio_feedback').checked,
+    stt_backend: document.getElementById('cfg-stt_backend').value,
+    stt_url: document.getElementById('cfg-stt_url').value,
+    llm_backend: document.getElementById('cfg-llm_backend').value,
+    llm_url: document.getElementById('cfg-llm_url').value,
+    llm_model: document.getElementById('cfg-llm_model').value,
+  };
+  try {
+    await fetch(API + '/config', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    showToast('Config saved');
+  } catch(e) { showToast('Save failed'); }
+}
+
+// STT/LLM field toggles
+function toggleSTTFields() {
+  const backend = document.getElementById('cfg-stt_backend').value;
+  document.getElementById('stt-url-field').style.display = backend === 'local' ? '' : 'none';
+}
+
+function toggleLLMFields() {
+  const backend = document.getElementById('cfg-llm_backend').value;
+  document.getElementById('llm-url-field').style.display = backend === 'ollama' ? '' : 'none';
+  document.getElementById('llm-model-field').style.display = backend === 'none' ? 'none' : '';
+}
+
+// Test buttons
+async function testSTT() {
+  const el = document.getElementById('stt-result');
+  el.className = 'test-result'; el.textContent = 'Testing...'; el.style.display = 'block';
+  try {
+    const res = await fetch(API + '/test/stt', { method: 'POST' });
+    const data = await res.json();
+    el.className = 'test-result ' + (data.ok ? 'ok' : 'fail');
+    el.textContent = data.ok ? 'Connected (HTTP ' + data.status + ')' : 'Failed: ' + (data.error || 'HTTP ' + data.status);
+  } catch(e) { el.className = 'test-result fail'; el.textContent = 'Error: ' + e.message; }
+}
+
+async function testLLM() {
+  const el = document.getElementById('llm-result');
+  el.className = 'test-result'; el.textContent = 'Testing...'; el.style.display = 'block';
+  try {
+    const res = await fetch(API + '/test/llm', { method: 'POST' });
+    const data = await res.json();
+    el.className = 'test-result ' + (data.ok ? 'ok' : 'fail');
+    el.textContent = data.ok ? (data.message || 'Connected (HTTP ' + data.status + ')') : 'Failed: ' + (data.error || 'HTTP ' + data.status);
+  } catch(e) { el.className = 'test-result fail'; el.textContent = 'Error: ' + e.message; }
+}
+
+// API Key
+async function loadKeyStatus() {
+  try {
+    const res = await fetch(API + '/key?key=openai-api-key');
+    const data = await res.json();
+    const el = document.getElementById('key-status');
+    el.className = 'key-status ' + (data.exists ? 'set' : 'unset');
+    el.textContent = data.exists ? 'Key is set in keychain' : 'No key stored';
+  } catch(e) {}
+}
+
+async function saveKey() {
+  const val = document.getElementById('api-key-input').value.trim();
+  if (!val) return;
+  try {
+    await fetch(API + '/key', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({key:'openai-api-key', value: val}) });
+    document.getElementById('api-key-input').value = '';
+    loadKeyStatus();
+    showToast('Key saved');
+  } catch(e) { showToast('Failed to save key'); }
+}
+
+async function deleteKey() {
+  try {
+    await fetch(API + '/key', { method: 'DELETE', headers: {'Content-Type':'application/json'}, body: JSON.stringify({key:'openai-api-key'}) });
+    loadKeyStatus();
+    showToast('Key removed');
+  } catch(e) { showToast('Failed to remove key'); }
+}
+
+// Dictionary
+async function loadDictionary() {
+  try {
+    const res = await fetch(API + '/dictionary');
+    const words = await res.json();
+    document.getElementById('dictionary-text').value = words.join('\n');
+  } catch(e) {}
+}
+
+async function saveDictionary() {
+  const text = document.getElementById('dictionary-text').value;
+  const words = text.split('\n').map(w => w.trim()).filter(w => w);
+  try {
+    await fetch(API + '/dictionary', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(words) });
+    showToast('Dictionary saved');
+  } catch(e) { showToast('Failed to save'); }
+}
+
+// Snippets
+let snippets = [];
+
+async function loadSnippets() {
+  try {
+    const res = await fetch(API + '/snippets');
+    snippets = await res.json();
+    renderSnippets();
+  } catch(e) {}
+}
+
+function renderSnippets() {
+  const el = document.getElementById('snippets-list');
+  el.innerHTML = '';
+  snippets.forEach((s, i) => {
+    const div = document.createElement('div');
+    div.className = 'snippet-item';
+    div.innerHTML = '<input class="trigger" value="' + esc(s.Trigger || s.trigger || '') + '" placeholder="trigger" oninput="updateSnippet(' + i + ',\'trigger\',this.value)">' +
+      '<input value="' + esc(s.Text || s.text || '') + '" placeholder="text" oninput="updateSnippet(' + i + ',\'text\',this.value)">' +
+      '<button class="snippet-remove" onclick="removeSnippet(' + i + ')">&#215;</button>';
+    el.appendChild(div);
+  });
+}
+
+function updateSnippet(i, field, val) {
+  if (field === 'trigger') { snippets[i].Trigger = val; snippets[i].trigger = val; }
+  else { snippets[i].Text = val; snippets[i].text = val; }
+}
+
+function addSnippet() {
+  snippets.push({Trigger:'', Text:''});
+  renderSnippets();
+}
+
+function removeSnippet(i) {
+  snippets.splice(i, 1);
+  renderSnippets();
+}
+
+async function saveSnippets() {
+  const data = snippets.map(s => ({Trigger: s.Trigger || s.trigger || '', Text: s.Text || s.text || ''}));
+  try {
+    await fetch(API + '/snippets', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+    showToast('Snippets saved');
+  } catch(e) { showToast('Failed to save'); }
+}
+
+function esc(s) { return s.replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+
+// History
+async function loadHistory() {
+  try {
+    const res = await fetch(API + '/history');
+    historyData = await res.json();
+    renderHistory(historyData);
+  } catch(e) {}
+}
+
+function renderHistory(entries) {
+  const tbody = document.getElementById('history-body');
+  tbody.innerHTML = '';
+  entries.forEach(e => {
+    const tr = document.createElement('tr');
+    const time = new Date(e.timestamp).toLocaleString();
+    const dur = e.duration_seconds ? e.duration_seconds.toFixed(1) + 's' : '-';
+    const app = e.app_context || '-';
+    const text = e.cleaned_text || e.raw_text || '';
+    tr.innerHTML = '<td>' + esc(time) + '</td><td>' + esc(dur) + '</td><td>' + esc(app) + '</td><td title="' + esc(text) + '">' + esc(text) + '</td>';
+    tr.addEventListener('click', () => {
+      navigator.clipboard.writeText(text).then(() => showToast('Copied to clipboard'));
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+function filterHistory() {
+  const q = document.getElementById('history-search').value.toLowerCase();
+  if (!q) { renderHistory(historyData); return; }
+  renderHistory(historyData.filter(e =>
+    (e.cleaned_text || '').toLowerCase().includes(q) ||
+    (e.raw_text || '').toLowerCase().includes(q) ||
+    (e.app_context || '').toLowerCase().includes(q)
+  ));
+}
+
+// Status
+async function loadStatus() {
+  try {
+    const res = await fetch(API + '/status');
+    const data = await res.json();
+    const dot = document.getElementById('status-dot');
+    const stateEl = document.getElementById('status-state');
+    stateEl.textContent = data.state;
+    dot.className = 'status-dot ' + (data.state === 'idle' ? 'green' : data.state === 'recording' ? 'red' : 'yellow');
+    document.getElementById('status-uptime').textContent = data.uptime;
+  } catch(e) {}
+}
+
+async function loadStatusDetail() {
+  await loadStatus();
+  const status = document.getElementById('status-state').textContent;
+  document.getElementById('detail-state').textContent = status;
+  document.getElementById('detail-uptime').textContent = document.getElementById('status-uptime').textContent;
+  try {
+    const cfgRes = await fetch(API + '/config');
+    const cfg = await cfgRes.json();
+    document.getElementById('detail-port').textContent = cfg.ui_port;
+    document.getElementById('detail-stt').textContent = cfg.stt_backend || 'openai';
+    document.getElementById('detail-llm').textContent = cfg.llm_backend || 'openai';
+  } catch(e) {}
+  try {
+    const keyRes = await fetch(API + '/key?key=openai-api-key');
+    const keyData = await keyRes.json();
+    document.getElementById('detail-key').textContent = keyData.exists ? 'Set' : 'Not set';
+  } catch(e) {}
+}
+
+// Toast
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2000);
+}
+
+// Init
+loadConfig();
+loadDictionary();
+loadSnippets();
+loadKeyStatus();
+loadStatus();
+setInterval(loadStatus, 5000);
+</script>
+</body>
+</html>

@@ -29,5 +29,6 @@ func (t *noopTray) Quit() {
 	t.doneOnce.Do(func() { close(t.doneCh) })
 }
 
-func (t *noopTray) SetState(state State) {}
-func (t *noopTray) SetStatus(text string) {}
+func (t *noopTray) SetState(state State)      {}
+func (t *noopTray) SetStatus(text string)      {}
+func (t *noopTray) SetSettingsPort(port int)   {}

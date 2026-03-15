@@ -3,6 +3,9 @@
 package tray
 
 import (
+	"fmt"
+	"os/exec"
+	"runtime"
 	"sync"
 
 	"fyne.io/systray"
@@ -14,11 +17,16 @@ import (
 type enabledTray struct {
 	statusItem *systray.MenuItem
 	quitOnce   sync.Once
+	port       int
 }
 
 // New returns a real system tray implementation.
 func New() Tray {
 	return &enabledTray{}
+}
+
+func (t *enabledTray) SetSettingsPort(port int) {
+	t.port = port
 }
 
 func (t *enabledTray) Run(onReady func(), onQuit func()) {
@@ -28,6 +36,17 @@ func (t *enabledTray) Run(onReady func(), onQuit func()) {
 
 		t.statusItem = systray.AddMenuItem("Idle", "")
 		t.statusItem.Disable()
+
+		if t.port > 0 {
+			settings := systray.AddMenuItem("Settings", "Open web settings")
+			go func() {
+				for range settings.ClickedCh {
+					url := fmt.Sprintf("http://localhost:%d", t.port)
+					openBrowser(url)
+				}
+			}()
+		}
+
 		systray.AddSeparator()
 		quit := systray.AddMenuItem("Quit", "Quit vox")
 
@@ -67,5 +86,14 @@ func (t *enabledTray) SetState(state State) {
 func (t *enabledTray) SetStatus(text string) {
 	if t.statusItem != nil {
 		t.statusItem.SetTitle(text)
+	}
+}
+
+func openBrowser(url string) {
+	switch runtime.GOOS {
+	case "darwin":
+		exec.Command("open", url).Start()
+	default:
+		exec.Command("xdg-open", url).Start()
 	}
 }

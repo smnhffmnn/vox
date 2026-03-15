@@ -24,6 +24,7 @@ import (
 	"github.com/smnhffmnn/vox/internal/notify"
 	"github.com/smnhffmnn/vox/internal/stt"
 	"github.com/smnhffmnn/vox/internal/tray"
+	"github.com/smnhffmnn/vox/internal/ui"
 	"github.com/smnhffmnn/vox/internal/windowctx"
 )
 
@@ -44,6 +45,7 @@ type pipelineConfig struct {
 	audioFeedback bool
 	tray          tray.Tray
 	history       *history.History
+	uiServer      *ui.Server
 }
 
 func main() {
@@ -206,6 +208,15 @@ func runDaemon() {
 	t := tray.New()
 	hist := history.NewHistory(1000)
 
+	// Start UI server
+	uiPort := cfg.UIPort
+	if uiPort == 0 {
+		uiPort = 7890
+	}
+	uiServer := ui.NewServer(cfg, hist, uiPort)
+	uiServer.Start()
+	t.SetSettingsPort(uiPort)
+
 	pcfg := &pipelineConfig{
 		cfg:           cfg,
 		apiKey:        apiKey,
@@ -219,6 +230,7 @@ func runDaemon() {
 		audioFeedback: cfg.AudioFeedback,
 		tray:          t,
 		history:       hist,
+		uiServer:      uiServer,
 	}
 
 	// Set up hotkey listener
@@ -237,6 +249,12 @@ func runDaemon() {
 	toggleMode := cfg.Mode == "toggle"
 	var toggleState bool
 
+	setUIState := func(state string) {
+		if uiServer != nil {
+			uiServer.SetState(state)
+		}
+	}
+
 	onPress := func() {
 		recordingMu.Lock()
 		defer recordingMu.Unlock()
@@ -250,6 +268,7 @@ func runDaemon() {
 					}
 					t.SetState(tray.StateProcessing)
 					t.SetStatus("Processing...")
+					setUIState("processing")
 					gen := recordingGen.Add(1)
 					go handleStopAndProcess(ctx, recording, pcfg, gen)
 					recording = nil
@@ -273,12 +292,14 @@ func runDaemon() {
 			fmt.Fprintf(os.Stderr, "vox: Aufnahme starten: %v\n", err)
 			t.SetState(tray.StateIdle)
 			t.SetStatus("Error: recording failed")
+			setUIState("idle")
 			return
 		}
 		recording = rec
 		isRecording = true
 		t.SetState(tray.StateRecording)
 		t.SetStatus("Recording...")
+		setUIState("recording")
 		fmt.Fprintln(os.Stderr, "Recording...")
 	}
 
@@ -299,6 +320,7 @@ func runDaemon() {
 		}
 		t.SetState(tray.StateProcessing)
 		t.SetStatus("Processing...")
+		setUIState("processing")
 		gen := recordingGen.Add(1)
 		go handleStopAndProcess(ctx, recording, pcfg, gen)
 		recording = nil
@@ -369,6 +391,9 @@ func handleStopAndProcess(ctx context.Context, rec *audio.Recording, pcfg *pipel
 		if pcfg.tray != nil && recordingGen.Load() == gen {
 			pcfg.tray.SetState(tray.StateIdle)
 			pcfg.tray.SetStatus("Error: recording failed")
+			if pcfg.uiServer != nil {
+				pcfg.uiServer.SetState("idle")
+			}
 		}
 		return
 	}
@@ -394,6 +419,9 @@ func handleStopAndProcess(ctx context.Context, rec *audio.Recording, pcfg *pipel
 		if pcfg.tray != nil && recordingGen.Load() == gen {
 			pcfg.tray.SetState(tray.StateIdle)
 			pcfg.tray.SetStatus("Error")
+			if pcfg.uiServer != nil {
+				pcfg.uiServer.SetState("idle")
+			}
 		}
 		return
 	}
@@ -429,6 +457,9 @@ func handleStopAndProcess(ctx context.Context, rec *audio.Recording, pcfg *pipel
 	if pcfg.tray != nil && recordingGen.Load() == gen {
 		pcfg.tray.SetState(tray.StateIdle)
 		pcfg.tray.SetStatus("Idle")
+		if pcfg.uiServer != nil {
+			pcfg.uiServer.SetState("idle")
+		}
 	}
 }
 

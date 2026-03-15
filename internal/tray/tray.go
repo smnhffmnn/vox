@@ -20,4 +20,6 @@ type Tray interface {
 	SetState(state State)
 	// SetStatus sets the status text in the menu.
 	SetStatus(text string)
+	// SetSettingsPort enables the "Settings" menu item that opens the UI.
+	SetSettingsPort(port int)
 }

@@ -59,5 +59,6 @@ func (t *noopTray) Quit() {
 	t.quitOnce.Do(func() { C.voxTrayStopNSApp() })
 }
 
-func (t *noopTray) SetState(state State) {}
-func (t *noopTray) SetStatus(text string) {}
+func (t *noopTray) SetState(state State)      {}
+func (t *noopTray) SetStatus(text string)      {}
+func (t *noopTray) SetSettingsPort(port int)   {}
