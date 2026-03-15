@@ -8,17 +8,25 @@ import (
 
 // Config holds the application configuration.
 type Config struct {
-	Language string
-	Output   string
-	Raw      bool
+	Language      string
+	Output        string
+	Raw           bool
+	Hotkey        string
+	Mode          string // "hold" or "toggle"
+	Notifications bool
+	AudioFeedback bool
 }
 
 // DefaultConfig returns a Config with default values.
 func DefaultConfig() *Config {
 	return &Config{
-		Language: "de",
-		Output:   "stdout",
-		Raw:      false,
+		Language:      "de",
+		Output:        "stdout",
+		Raw:           false,
+		Hotkey:        "right_option",
+		Mode:          "hold",
+		Notifications: true,
+		AudioFeedback: true,
 	}
 }
 
@@ -64,6 +72,14 @@ func parseConfig(data string, cfg *Config) {
 			cfg.Output = value
 		case "raw":
 			cfg.Raw = value == "true"
+		case "hotkey":
+			cfg.Hotkey = value
+		case "mode":
+			cfg.Mode = value
+		case "notifications":
+			cfg.Notifications = value == "true"
+		case "audio_feedback":
+			cfg.AudioFeedback = value == "true"
 		}
 	}
 }
