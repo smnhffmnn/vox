@@ -28,6 +28,8 @@ import (
 	"github.com/smnhffmnn/vox/internal/windowctx"
 )
 
+const Version = "0.2.0"
+
 // recordingGen tracks the current recording generation for tray state race prevention.
 var recordingGen atomic.Uint64
 
@@ -213,7 +215,7 @@ func runDaemon() {
 	if uiPort == 0 {
 		uiPort = 7890
 	}
-	uiServer := ui.NewServer(cfg, hist, uiPort)
+	uiServer := ui.NewServer(cfg, hist, uiPort, Version)
 	uiServer.Start()
 	t.SetSettingsPort(uiPort)
 
@@ -432,6 +434,9 @@ func handleStopAndProcess(ctx context.Context, rec *audio.Recording, pcfg *pipel
 		if wctx != nil {
 			appCtx = wctx.AppName
 		}
+		pcfg.cfg.RLock()
+		sttBackend := pcfg.cfg.STTBackend
+		pcfg.cfg.RUnlock()
 		pcfg.history.Add(history.Entry{
 			Timestamp:   time.Now(),
 			Language:    pcfg.lang,
@@ -439,7 +444,7 @@ func handleStopAndProcess(ctx context.Context, rec *audio.Recording, pcfg *pipel
 			CleanedText: tr.cleaned,
 			AppContext:  appCtx,
 			DurationSec: duration.Seconds(),
-			Backend:     pcfg.cfg.STTBackend,
+			Backend:     sttBackend,
 		})
 	}
 
@@ -471,8 +476,16 @@ type transcriptionResult struct {
 
 // transcribeAndCleanup runs the STT → cleanup → snippet-match pipeline.
 func transcribeAndCleanup(pcfg *pipelineConfig, audioFile string, ctx *windowctx.Context) (transcriptionResult, error) {
+	pcfg.cfg.RLock()
+	sttBackend := pcfg.cfg.STTBackend
+	sttURL := pcfg.cfg.STTURL
+	llmBackend := pcfg.cfg.LLMBackend
+	llmURL := pcfg.cfg.LLMURL
+	llmModel := pcfg.cfg.LLMModel
+	pcfg.cfg.RUnlock()
+
 	whisperPrompt := strings.Join(pcfg.dictionary, ", ")
-	transcriber := stt.NewTranscriber(pcfg.cfg.STTBackend, pcfg.apiKey, pcfg.cfg.STTURL)
+	transcriber := stt.NewTranscriber(sttBackend, pcfg.apiKey, sttURL)
 	raw, err := transcriber.Transcribe(audioFile, pcfg.lang, whisperPrompt)
 	if err != nil {
 		return transcriptionResult{}, fmt.Errorf("Transkription: %w", err)
@@ -482,7 +495,7 @@ func transcribeAndCleanup(pcfg *pipelineConfig, audioFile string, ctx *windowctx
 	result := raw
 
 	if !pcfg.raw {
-		cleaner := cleanup.NewCleanerFromConfig(pcfg.cfg.LLMBackend, pcfg.apiKey, pcfg.cfg.LLMURL, pcfg.cfg.LLMModel)
+		cleaner := cleanup.NewCleanerFromConfig(llmBackend, pcfg.apiKey, llmURL, llmModel)
 		cleaned, err := cleanupWithPrompts(cleaner, raw, pcfg.lang, ctx, pcfg.dictionary, pcfg.customPrompts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Cleanup fehlgeschlagen, verwende Rohtext: %v\n", err)

@@ -25,6 +25,7 @@ type Server struct {
 	cfg     *config.Config
 	history *history.History
 	port    int
+	version string
 	started time.Time
 
 	state   string
@@ -32,11 +33,12 @@ type Server struct {
 }
 
 // NewServer creates a UI server.
-func NewServer(cfg *config.Config, hist *history.History, port int) *Server {
+func NewServer(cfg *config.Config, hist *history.History, port int, version string) *Server {
 	return &Server{
 		cfg:     cfg,
 		history: hist,
 		port:    port,
+		version: version,
 		started: time.Now(),
 		state:   "idle",
 	}
@@ -76,7 +78,11 @@ func (s *Server) Start() error {
 	addr := fmt.Sprintf("127.0.0.1:%d", s.port)
 	fmt.Fprintf(os.Stderr, "vox: UI server at http://%s\n", addr)
 
-	go http.ListenAndServe(addr, mux)
+	go func() {
+		if err := http.ListenAndServe(addr, mux); err != nil {
+			fmt.Fprintf(os.Stderr, "vox: UI server: %v\n", err)
+		}
+	}()
 	return nil
 }
 
@@ -93,7 +99,8 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, map[string]any{
+		s.cfg.RLock()
+		resp := map[string]any{
 			"language":       s.cfg.Language,
 			"output":         s.cfg.Output,
 			"raw":            s.cfg.Raw,
@@ -107,15 +114,20 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"llm_url":        s.cfg.LLMURL,
 			"llm_model":      s.cfg.LLMModel,
 			"ui_port":        s.cfg.UIPort,
-		})
+		}
+		s.cfg.RUnlock()
+		writeJSON(w, resp)
 	case http.MethodPut:
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, "Invalid JSON", 400)
 			return
 		}
+		s.cfg.Lock()
 		applyConfigUpdate(s.cfg, body)
-		if err := s.cfg.Save(); err != nil {
+		err := s.cfg.Save()
+		s.cfg.Unlock()
+		if err != nil {
 			writeError(w, err.Error(), 500)
 			return
 		}
@@ -274,9 +286,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	uptime := time.Since(s.started).Truncate(time.Second).String()
 	writeJSON(w, map[string]any{
-		"state":  s.GetState(),
-		"uptime": uptime,
-		"port":   s.port,
+		"state":   s.GetState(),
+		"uptime":  uptime,
+		"port":    s.port,
+		"version": s.version,
 	})
 }
 
@@ -285,9 +298,14 @@ func (s *Server) handleTestSTT(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(405)
 		return
 	}
+	s.cfg.RLock()
+	backend := s.cfg.STTBackend
+	sttURL := s.cfg.STTURL
+	s.cfg.RUnlock()
+
 	url := "https://api.openai.com/v1/models"
-	if s.cfg.STTBackend == "local" {
-		u := s.cfg.STTURL
+	if backend == "local" {
+		u := sttURL
 		if u == "" {
 			u = "http://localhost:8080"
 		}
@@ -296,7 +314,7 @@ func (s *Server) handleTestSTT(w http.ResponseWriter, r *http.Request) {
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	req, _ := http.NewRequest("GET", url, nil)
-	if s.cfg.STTBackend != "local" {
+	if backend != "local" {
 		if key := resolveKey(); key != "" {
 			req.Header.Set("Authorization", "Bearer "+key)
 		}
@@ -316,10 +334,15 @@ func (s *Server) handleTestLLM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.cfg.RLock()
+	llmBackend := s.cfg.LLMBackend
+	llmURL := s.cfg.LLMURL
+	s.cfg.RUnlock()
+
 	baseURL := "https://api.openai.com/v1"
-	switch s.cfg.LLMBackend {
+	switch llmBackend {
 	case "ollama":
-		baseURL = s.cfg.LLMURL
+		baseURL = llmURL
 		if baseURL == "" {
 			baseURL = "http://localhost:11434/v1"
 		}
@@ -331,7 +354,7 @@ func (s *Server) handleTestLLM(w http.ResponseWriter, r *http.Request) {
 	url := baseURL + "/models"
 	client := &http.Client{Timeout: 5 * time.Second}
 	req, _ := http.NewRequest("GET", url, nil)
-	if s.cfg.LLMBackend != "ollama" {
+	if llmBackend != "ollama" {
 		if key := resolveKey(); key != "" {
 			req.Header.Set("Authorization", "Bearer "+key)
 		}

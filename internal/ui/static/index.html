@@ -815,20 +815,19 @@ function renderSnippets() {
   snippets.forEach((s, i) => {
     const div = document.createElement('div');
     div.className = 'snippet-item';
-    div.innerHTML = '<input class="trigger" value="' + esc(s.Trigger || s.trigger || '') + '" placeholder="trigger" oninput="updateSnippet(' + i + ',\'trigger\',this.value)">' +
-      '<input value="' + esc(s.Text || s.text || '') + '" placeholder="text" oninput="updateSnippet(' + i + ',\'text\',this.value)">' +
+    div.innerHTML = '<input class="trigger" value="' + esc(s.trigger || '') + '" placeholder="trigger" oninput="updateSnippet(' + i + ',\'trigger\',this.value)">' +
+      '<input value="' + esc(s.text || '') + '" placeholder="text" oninput="updateSnippet(' + i + ',\'text\',this.value)">' +
       '<button class="snippet-remove" onclick="removeSnippet(' + i + ')">&#215;</button>';
     el.appendChild(div);
   });
 }
 
 function updateSnippet(i, field, val) {
-  if (field === 'trigger') { snippets[i].Trigger = val; snippets[i].trigger = val; }
-  else { snippets[i].Text = val; snippets[i].text = val; }
+  snippets[i][field] = val;
 }
 
 function addSnippet() {
-  snippets.push({Trigger:'', Text:''});
+  snippets.push({trigger:'', text:''});
   renderSnippets();
 }
 
@@ -838,14 +837,14 @@ function removeSnippet(i) {
 }
 
 async function saveSnippets() {
-  const data = snippets.map(s => ({Trigger: s.Trigger || s.trigger || '', Text: s.Text || s.text || ''}));
+  const data = snippets.map(s => ({trigger: s.trigger || '', text: s.text || ''}));
   try {
     await fetch(API + '/snippets', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
     showToast('Snippets saved');
   } catch(e) { showToast('Failed to save'); }
 }
 
-function esc(s) { return s.replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+function esc(s) { if (!s) return ''; return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 // History
 async function loadHistory() {

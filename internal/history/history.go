@@ -123,7 +123,9 @@ func (h *History) writeAll() error {
 		if err != nil {
 			continue
 		}
-		f.Write(append(data, '\n'))
+		if _, err := f.Write(append(data, '\n')); err != nil {
+			return err
+		}
 	}
 	return nil
 }

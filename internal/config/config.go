@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // Config holds the application configuration.
 type Config struct {
+	mu            sync.RWMutex
 	Language      string
 	Output        string
 	Raw           bool
@@ -28,6 +30,14 @@ type Config struct {
 	// UI
 	UIPort int // Web UI port (default: 7890)
 }
+
+// Lock acquires a write lock on the config.
+func (c *Config) Lock()   { c.mu.Lock() }
+func (c *Config) Unlock() { c.mu.Unlock() }
+
+// RLock acquires a read lock on the config.
+func (c *Config) RLock()   { c.mu.RLock() }
+func (c *Config) RUnlock() { c.mu.RUnlock() }
 
 // DefaultConfig returns a Config with default values.
 func DefaultConfig() *Config {

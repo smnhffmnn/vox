@@ -8,8 +8,8 @@ import (
 
 // Snippet maps a voice trigger to replacement text.
 type Snippet struct {
-	Trigger string
-	Text    string
+	Trigger string `json:"trigger"`
+	Text    string `json:"text"`
 }
 
 // LoadSnippets reads ~/.config/vox/snippets.yaml and returns parsed snippets.
