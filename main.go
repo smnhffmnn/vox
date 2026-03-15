@@ -259,11 +259,24 @@ func runDaemon() {
 		doubletapPending bool
 	)
 
-	toggleMode := cfg.Mode == "toggle"
 	var toggleState bool
 
-	doubletapWindow := time.Duration(cfg.DoubletapWindow) * time.Millisecond
-	handsfreeTimeout := time.Duration(cfg.HandsfreeTimeout) * time.Second
+	// Config accessor helpers — read fresh values under RLock for hot-reload support.
+	isToggleMode := func() bool {
+		cfg.RLock()
+		defer cfg.RUnlock()
+		return cfg.Mode == "toggle"
+	}
+	getDoubletapWindow := func() time.Duration {
+		cfg.RLock()
+		defer cfg.RUnlock()
+		return time.Duration(cfg.DoubletapWindow) * time.Millisecond
+	}
+	getHandsfreeTimeout := func() time.Duration {
+		cfg.RLock()
+		defer cfg.RUnlock()
+		return time.Duration(cfg.HandsfreeTimeout) * time.Second
+	}
 
 	setUIState := func(state string) {
 		if uiServer != nil {
@@ -325,18 +338,12 @@ func runDaemon() {
 
 	// startHandsfree enters hands-free continuous recording mode. Must be called with recordingMu held.
 	startHandsfree := func() {
-		handsfreeActive = true
 		toggleState = false
-
-		if pcfg.audioFeedback {
-			feedback.PlayHandsfreeStart()
-		}
 
 		if !isRecording {
 			rec, err := audio.Start()
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "vox: Aufnahme starten: %v\n", err)
-				handsfreeActive = false
 				t.SetState(tray.StateIdle)
 				t.SetStatus("Error: recording failed")
 				setUIState("idle")
@@ -346,17 +353,23 @@ func runDaemon() {
 			isRecording = true
 		}
 
+		handsfreeActive = true
+
+		if pcfg.audioFeedback {
+			feedback.PlayHandsfreeStart()
+		}
+
 		t.SetState(tray.StateRecording)
 		setUIState("recording")
 		fmt.Fprintln(os.Stderr, "Recording (Hands-Free)...")
 
 		handsfreeDone = make(chan struct{})
 
-		if handsfreeTimeout > 0 {
-			deadline := time.Now().Add(handsfreeTimeout)
-			rem := handsfreeTimeout
+		hfTimeout := getHandsfreeTimeout()
+		if hfTimeout > 0 {
+			deadline := time.Now().Add(hfTimeout)
 			t.SetStatus(fmt.Sprintf("Recording (Hands-Free) — %d:%02d remaining",
-				int(rem.Minutes()), int(rem.Seconds())%60))
+				int(hfTimeout.Minutes()), int(hfTimeout.Seconds())%60))
 
 			go func(done chan struct{}, dl time.Time) {
 				ticker := time.NewTicker(time.Second)
@@ -376,7 +389,7 @@ func runDaemon() {
 				}
 			}(handsfreeDone, deadline)
 
-			handsfreeTimer = time.AfterFunc(handsfreeTimeout, func() {
+			handsfreeTimer = time.AfterFunc(hfTimeout, func() {
 				recordingMu.Lock()
 				defer recordingMu.Unlock()
 
@@ -398,7 +411,7 @@ func runDaemon() {
 
 				if pcfg.notifications {
 					notify.Send("vox", fmt.Sprintf("Hands-Free recording stopped after %d:%02d",
-						int(handsfreeTimeout.Minutes()), int(handsfreeTimeout.Seconds())%60))
+						int(hfTimeout.Minutes()), int(hfTimeout.Seconds())%60))
 				}
 			})
 		} else {
@@ -410,6 +423,14 @@ func runDaemon() {
 	stopHandsfree := func() {
 		handsfreeActive = false
 		toggleState = false
+
+		// Clear doubletap state to prevent deferred toggle from firing
+		doubletapPending = false
+		if doubletapTimer != nil {
+			doubletapTimer.Stop()
+			doubletapTimer = nil
+		}
+		lastReleaseTime = time.Time{}
 
 		if handsfreeTimer != nil {
 			handsfreeTimer.Stop()
@@ -431,8 +452,9 @@ func runDaemon() {
 		defer recordingMu.Unlock()
 
 		now := time.Now()
+		dtWindow := getDoubletapWindow()
 
-		if toggleMode {
+		if isToggleMode() {
 			// === TOGGLE MODE ===
 			if handsfreeActive {
 				// During hands-free: check for double-tap exit
@@ -463,7 +485,7 @@ func runDaemon() {
 		// === HOLD MODE ===
 		if handsfreeActive {
 			// During hands-free: check for double-tap exit
-			if !lastReleaseTime.IsZero() && now.Sub(lastReleaseTime) < doubletapWindow {
+			if !lastReleaseTime.IsZero() && now.Sub(lastReleaseTime) < dtWindow {
 				stopHandsfree()
 				return
 			}
@@ -472,7 +494,7 @@ func runDaemon() {
 		}
 
 		// Check for double-tap to enter hands-free
-		if !lastReleaseTime.IsZero() && now.Sub(lastReleaseTime) < doubletapWindow && !isRecording {
+		if !lastReleaseTime.IsZero() && now.Sub(lastReleaseTime) < dtWindow && !isRecording {
 			startHandsfree()
 			return
 		}
@@ -490,8 +512,9 @@ func runDaemon() {
 		defer recordingMu.Unlock()
 
 		now := time.Now()
+		dtWindow := getDoubletapWindow()
 
-		if toggleMode {
+		if isToggleMode() {
 			// === TOGGLE MODE ===
 			doubletapPending = true
 			if doubletapTimer != nil {
@@ -500,7 +523,7 @@ func runDaemon() {
 
 			if handsfreeActive {
 				// During hands-free: timer for exit detection
-				doubletapTimer = time.AfterFunc(doubletapWindow, func() {
+				doubletapTimer = time.AfterFunc(dtWindow, func() {
 					recordingMu.Lock()
 					defer recordingMu.Unlock()
 					if !doubletapPending {
@@ -514,7 +537,7 @@ func runDaemon() {
 
 			// Deferred toggle action
 			capturedToggleState := toggleState
-			doubletapTimer = time.AfterFunc(doubletapWindow, func() {
+			doubletapTimer = time.AfterFunc(dtWindow, func() {
 				recordingMu.Lock()
 				defer recordingMu.Unlock()
 				if !doubletapPending {

@@ -39,7 +39,7 @@ Systemweites Open-Source Diktiertool für Linux + macOS (wie WisprFlow). Single 
 
 - [ ] Auto-Learning aus Korrekturen (Dictionary wächst automatisch)
 - [ ] Multi-Language mit Auto-Detection
-- [ ] Hands-Free Continuous Mode (konfigurierbares Timeout, bis 6 Min)
+- [x] Hands-Free Continuous Mode (konfigurierbares Timeout, bis 6 Min)
 - [ ] Command Mode ("lösch den letzten Satz", "mach das als Aufzählung")
 - [x] Konfigurierbares STT-Backend (OpenAI / lokal)
 - [x] Konfigurierbares LLM-Backend (OpenAI / Ollama / none)

@@ -79,6 +79,8 @@ Press Enter to stop recording.
 
 The daemon runs in the background and listens for a global hotkey. When pressed, it starts recording; when released (hold mode) or pressed again (toggle mode), it stops, transcribes, cleans up, and injects the text.
 
+**Hands-Free mode:** Double-tap the hotkey to enter continuous recording. The recording runs until you double-tap again or the timeout expires (default: 6 minutes, configurable via `handsfree_timeout`).
+
 In daemon mode, the web UI starts automatically on `http://localhost:7890` (configurable via `ui_port`).
 
 ## Flags
@@ -107,6 +109,8 @@ hotkey: right_option    # right_option, right_alt, f13-f20
 mode: hold              # hold (hold-to-talk) or toggle (press to start/stop)
 notifications: true     # Desktop notification after transcription
 audio_feedback: true    # Sound on recording start/stop
+doubletap_window: 400   # Double-tap detection window in ms (default: 400)
+handsfree_timeout: 360  # Hands-free auto-stop in seconds, 0 = no limit (default: 360)
 
 # Backend
 stt_backend: openai     # openai | local
