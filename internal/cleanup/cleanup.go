@@ -27,9 +27,8 @@ const (
 	categoryBrowser
 )
 
-// CategoryName returns the string name for an app category.
-func CategoryName(ctx *windowctx.Context) string {
-	switch detectCategory(ctx) {
+func categoryToString(cat appCategory) string {
+	switch cat {
 	case categoryChat:
 		return "chat"
 	case categoryEmail:
@@ -43,6 +42,11 @@ func CategoryName(ctx *windowctx.Context) string {
 	default:
 		return "default"
 	}
+}
+
+// CategoryName returns the string name for an app category.
+func CategoryName(ctx *windowctx.Context) string {
+	return categoryToString(detectCategory(ctx))
 }
 
 func detectCategory(ctx *windowctx.Context) appCategory {
@@ -218,24 +222,28 @@ type chatResponse struct {
 
 // Cleanup cleans up transcribed text using an LLM.
 // ctx can be nil — in that case, default tone is used.
-// customPrompt, if non-empty, replaces the default system prompt entirely.
 func (c *Cleaner) Cleanup(text, language string, ctx *windowctx.Context, dictionary []string) (string, error) {
-	return c.CleanupWithPrompt(text, language, ctx, dictionary, "")
+	return c.CleanupWithCustomPrompts(text, language, ctx, dictionary, nil)
 }
 
-// CleanupWithPrompt is like Cleanup but accepts an optional custom system prompt.
-func (c *Cleaner) CleanupWithPrompt(text, language string, ctx *windowctx.Context, dictionary []string, customPrompt string) (string, error) {
+// CleanupWithCustomPrompts is like Cleanup but checks customPrompts for a category-specific prompt.
+// Keys: "chat", "email", "ide", "docs", "browser", "default".
+func (c *Cleaner) CleanupWithCustomPrompts(text, language string, ctx *windowctx.Context, dictionary []string, customPrompts map[string]string) (string, error) {
+	cat := detectCategory(ctx)
+	catName := categoryToString(cat)
+
 	var prompt string
-	if customPrompt != "" {
-		prompt = customPrompt
-	} else {
+	if customPrompts != nil {
+		if p, ok := customPrompts[catName]; ok {
+			prompt = p
+		}
+	}
+	if prompt == "" {
 		if language == "de" {
 			prompt = basePromptDE
 		} else {
 			prompt = basePromptEN
 		}
-
-		cat := detectCategory(ctx)
 		prompt += toneInstruction(cat, language)
 	}
 

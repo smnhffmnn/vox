@@ -39,6 +39,7 @@ type pipelineConfig struct {
 	raw           bool
 	dictionary    []string
 	snippets      []config.Snippet
+	customPrompts map[string]string
 	notifications bool
 	audioFeedback bool
 	tray          tray.Tray
@@ -152,13 +153,14 @@ func runCLI() {
 
 	// Transcribe and inject
 	pcfg := &pipelineConfig{
-		cfg:        cfg,
-		apiKey:     apiKey,
-		lang:       *lang,
-		output:     *output,
-		raw:        *noCleanup,
-		dictionary: dictionary,
-		snippets:   snippets,
+		cfg:           cfg,
+		apiKey:        apiKey,
+		lang:          *lang,
+		output:        *output,
+		raw:           *noCleanup,
+		dictionary:    dictionary,
+		snippets:      snippets,
+		customPrompts: config.LoadCustomPrompts(),
 	}
 
 	tr, err := transcribeAndCleanup(pcfg, audioFile, ctx)
@@ -212,6 +214,7 @@ func runDaemon() {
 		raw:           *noCleanup,
 		dictionary:    dictionary,
 		snippets:      snippets,
+		customPrompts: config.LoadCustomPrompts(),
 		notifications: cfg.Notifications,
 		audioFeedback: cfg.AudioFeedback,
 		tray:          t,
@@ -449,7 +452,7 @@ func transcribeAndCleanup(pcfg *pipelineConfig, audioFile string, ctx *windowctx
 
 	if !pcfg.raw {
 		cleaner := cleanup.NewCleanerFromConfig(pcfg.cfg.LLMBackend, pcfg.apiKey, pcfg.cfg.LLMURL, pcfg.cfg.LLMModel)
-		cleaned, err := cleaner.Cleanup(raw, pcfg.lang, ctx, pcfg.dictionary)
+		cleaned, err := cleanupWithPrompts(cleaner, raw, pcfg.lang, ctx, pcfg.dictionary, pcfg.customPrompts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Cleanup fehlgeschlagen, verwende Rohtext: %v\n", err)
 		} else {
@@ -465,6 +468,14 @@ func transcribeAndCleanup(pcfg *pipelineConfig, audioFile string, ctx *windowctx
 	}
 
 	return transcriptionResult{raw: raw, cleaned: result}, nil
+}
+
+// cleanupWithPrompts calls CleanupWithCustomPrompts if the cleaner supports it, otherwise Cleanup.
+func cleanupWithPrompts(c cleanup.CleanerInterface, text, lang string, ctx *windowctx.Context, dict []string, prompts map[string]string) (string, error) {
+	if cp, ok := c.(*cleanup.Cleaner); ok && len(prompts) > 0 {
+		return cp.CleanupWithCustomPrompts(text, lang, ctx, dict, prompts)
+	}
+	return c.Cleanup(text, lang, ctx, dict)
 }
 
 func fatal(format string, args ...any) {
