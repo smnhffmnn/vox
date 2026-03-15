@@ -17,6 +17,7 @@ import (
 	"github.com/smnhffmnn/vox/internal/cleanup"
 	"github.com/smnhffmnn/vox/internal/config"
 	"github.com/smnhffmnn/vox/internal/feedback"
+	"github.com/smnhffmnn/vox/internal/history"
 	"github.com/smnhffmnn/vox/internal/hotkey"
 	"github.com/smnhffmnn/vox/internal/inject"
 	"github.com/smnhffmnn/vox/internal/keychain"
@@ -41,6 +42,7 @@ type pipelineConfig struct {
 	notifications bool
 	audioFeedback bool
 	tray          tray.Tray
+	history       *history.History
 }
 
 func main() {
@@ -159,13 +161,13 @@ func runCLI() {
 		snippets:   snippets,
 	}
 
-	result, err := transcribeAndCleanup(pcfg, audioFile, ctx)
+	tr, err := transcribeAndCleanup(pcfg, audioFile, ctx)
 	if err != nil {
 		fatal("%v", err)
 	}
 
 	method := inject.ParseMethod(pcfg.output)
-	if err := inject.Inject(method, result); err != nil {
+	if err := inject.Inject(method, tr.cleaned); err != nil {
 		fatal("Ausgabe: %v", err)
 	}
 
@@ -200,6 +202,7 @@ func runDaemon() {
 	}
 
 	t := tray.New()
+	hist := history.NewHistory(1000)
 
 	pcfg := &pipelineConfig{
 		cfg:           cfg,
@@ -212,6 +215,7 @@ func runDaemon() {
 		notifications: cfg.Notifications,
 		audioFeedback: cfg.AudioFeedback,
 		tray:          t,
+		history:       hist,
 	}
 
 	// Set up hotkey listener
@@ -381,7 +385,7 @@ func handleStopAndProcess(ctx context.Context, rec *audio.Recording, pcfg *pipel
 		wctx = &w
 	}
 
-	result, err := transcribeAndCleanup(pcfg, audioFile, wctx)
+	tr, err := transcribeAndCleanup(pcfg, audioFile, wctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "vox: %v\n", err)
 		if pcfg.tray != nil && recordingGen.Load() == gen {
@@ -391,14 +395,31 @@ func handleStopAndProcess(ctx context.Context, rec *audio.Recording, pcfg *pipel
 		return
 	}
 
+	// Record to history
+	if pcfg.history != nil {
+		appCtx := ""
+		if wctx != nil {
+			appCtx = wctx.AppName
+		}
+		pcfg.history.Add(history.Entry{
+			Timestamp:   time.Now(),
+			Language:    pcfg.lang,
+			RawText:     tr.raw,
+			CleanedText: tr.cleaned,
+			AppContext:  appCtx,
+			DurationSec: duration.Seconds(),
+			Backend:     pcfg.cfg.STTBackend,
+		})
+	}
+
 	method := inject.ParseMethod(pcfg.output)
-	if err := inject.Inject(method, result); err != nil {
+	if err := inject.Inject(method, tr.cleaned); err != nil {
 		fmt.Fprintf(os.Stderr, "vox: Ausgabe: %v\n", err)
 	}
 
 	// Notification
 	if pcfg.notifications {
-		notify.Send("vox", result)
+		notify.Send("vox", tr.cleaned)
 	}
 
 	// Reset tray only if no new recording has started
@@ -408,13 +429,19 @@ func handleStopAndProcess(ctx context.Context, rec *audio.Recording, pcfg *pipel
 	}
 }
 
+// transcriptionResult holds both raw and cleaned text from the pipeline.
+type transcriptionResult struct {
+	raw     string
+	cleaned string
+}
+
 // transcribeAndCleanup runs the STT → cleanup → snippet-match pipeline.
-func transcribeAndCleanup(pcfg *pipelineConfig, audioFile string, ctx *windowctx.Context) (string, error) {
+func transcribeAndCleanup(pcfg *pipelineConfig, audioFile string, ctx *windowctx.Context) (transcriptionResult, error) {
 	whisperPrompt := strings.Join(pcfg.dictionary, ", ")
 	transcriber := stt.NewTranscriber(pcfg.cfg.STTBackend, pcfg.apiKey, pcfg.cfg.STTURL)
 	raw, err := transcriber.Transcribe(audioFile, pcfg.lang, whisperPrompt)
 	if err != nil {
-		return "", fmt.Errorf("Transkription: %w", err)
+		return transcriptionResult{}, fmt.Errorf("Transkription: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "> %s\n", raw)
 
@@ -437,7 +464,7 @@ func transcribeAndCleanup(pcfg *pipelineConfig, audioFile string, ctx *windowctx
 		}
 	}
 
-	return result, nil
+	return transcriptionResult{raw: raw, cleaned: result}, nil
 }
 
 func fatal(format string, args ...any) {
