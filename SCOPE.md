@@ -30,10 +30,10 @@ Systemweites Open-Source Diktiertool für Linux + macOS (wie WisprFlow). Single 
   - Linux Wayland/Hyprland: `hyprctl activewindow -j`
   - Linux Wayland/KDE: KWin D-Bus Scripting
 - [x] Per-App Tone Profiles (casual für Chat, formal für E-Mail, code-aware für IDEs)
-- [ ] Konfigurierbarer LLM-Prompt pro Kontext/Modus
+- [x] Konfigurierbarer LLM-Prompt pro Kontext/Modus
 - [x] Custom Dictionary/Glossar (Wortliste die ASR und LLM-Cleanup beeinflusst)
 - [x] Snippet Library (Sprach-Trigger → Text-Expansion)
-- [ ] Offline-Modus: Whisper.cpp HTTP-Server + Ollama für lokales LLM
+- [x] Offline-Modus: Whisper.cpp HTTP-Server + Ollama für lokales LLM
 
 ### P2 — Power Features
 
@@ -41,8 +41,8 @@ Systemweites Open-Source Diktiertool für Linux + macOS (wie WisprFlow). Single 
 - [ ] Multi-Language mit Auto-Detection
 - [ ] Hands-Free Continuous Mode (konfigurierbares Timeout, bis 6 Min)
 - [ ] Command Mode ("lösch den letzten Satz", "mach das als Aufzählung")
-- [ ] Konfigurierbares STT-Backend (OpenAI / Groq / Deepgram / lokal)
-- [ ] Konfigurierbares LLM-Backend (OpenAI / Anthropic / Ollama / lokal)
+- [x] Konfigurierbares STT-Backend (OpenAI / lokal)
+- [x] Konfigurierbares LLM-Backend (OpenAI / Ollama / none)
 
 ### P3 — Polish
 
@@ -50,7 +50,9 @@ Systemweites Open-Source Diktiertool für Linux + macOS (wie WisprFlow). Single 
 - [x] Desktop-Notification bei fertigem Text
 - [x] Audio-Feedback (kurzer Ton bei Start/Stop)
 - [x] Config-Datei (~/.config/vox/config.yaml)
-- [ ] History/Log der letzten Transkriptionen
+- [x] History/Log der letzten Transkriptionen
+- [x] Embedded Web-UI (Settings, Backend-Config, Dictionary, Snippets, History, Status)
+- [x] API Key Management via OS Keychain
 - [ ] Latenz-Optimierung (Streaming ASR)
 - [ ] Usage-Statistiken
 
@@ -64,11 +66,11 @@ internal/
     recorder_linux.go           pw-record (PipeWire)
     recorder_darwin.go          sox
   stt/
-    stt.go                      Transcriber Interface
+    stt.go                      Transcriber Interface + Factory
     openai.go                   OpenAI Whisper API
-    local.go                    whisper.cpp HTTP Backend (P1)
+    local.go                    Local Whisper HTTP Backend
   cleanup/
-    cleanup.go                  Context-aware LLM Textbereinigung
+    cleanup.go                  Context-aware LLM Textbereinigung + Factory
   inject/
     injector.go                 Method types, ParseMethod, Inject dispatch
     injector_linux.go           wl-copy, wtype, ydotool
@@ -78,9 +80,19 @@ internal/
     windowctx_darwin.go         osascript + optional CGo Accessibility
     windowctx_linux.go          Auto-detect compositor, dispatch
   config/
-    config.go                   Config file parsing
+    config.go                   Config file parsing + Save
     dictionary.go               Dictionary loading
     snippets.go                 Snippet loading and matching
+    prompts.go                  Custom prompt loading per category
+  keychain/
+    keychain.go                 Keychain interface
+    keychain_darwin.go          macOS security command
+    keychain_linux.go           Linux secret-tool
+  history/
+    history.go                  JSONL transcription history
+  ui/
+    server.go                   Embedded Web-UI HTTP server + REST API
+    static/index.html           Single-page settings UI (go:embed)
   hotkey/
     hotkey.go                   Interface + Key types
     hotkey_linux.go             evdev (/dev/input/event*)
