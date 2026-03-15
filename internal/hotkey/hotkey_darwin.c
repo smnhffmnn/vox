@@ -90,23 +90,3 @@ void voxStopMonitor(void) {
     targetKeyPressed = NO;
 }
 
-void voxRunAppLoop(void) {
-    [NSApplication sharedApplication];
-    [NSApp run];
-}
-
-void voxStopAppLoop(void) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [NSApp stop:nil];
-        NSEvent *event = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
-                                            location:NSMakePoint(0, 0)
-                                       modifierFlags:0
-                                           timestamp:0
-                                        windowNumber:0
-                                             context:nil
-                                             subtype:0
-                                               data1:0
-                                               data2:0];
-        [NSApp postEvent:event atStart:YES];
-    });
-}

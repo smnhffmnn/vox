@@ -10,8 +10,6 @@ package hotkey
 void voxSetTargetKeyCode(int code);
 void voxStartMonitor(void);
 void voxStopMonitor(void);
-void voxRunAppLoop(void);
-void voxStopAppLoop(void);
 */
 import "C"
 
@@ -44,12 +42,17 @@ func goHotkeyUp() {
 }
 
 type darwinListener struct {
-	key Key
+	key       Key
+	closeCh   chan struct{}
+	closeOnce sync.Once
 }
 
 // New creates a new hotkey listener for the given key.
 func New(key Key) Listener {
-	return &darwinListener{key: key}
+	return &darwinListener{
+		key:     key,
+		closeCh: make(chan struct{}),
+	}
 }
 
 func (d *darwinListener) Listen(onPress func(), onRelease func()) error {
@@ -62,14 +65,16 @@ func (d *darwinListener) Listen(onPress func(), onRelease func()) error {
 	C.voxSetTargetKeyCode(C.int(keyCode))
 	C.voxStartMonitor()
 
-	// Run the macOS event loop — blocks until voxStopAppLoop() is called
-	C.voxRunAppLoop()
+	// Block until Close() — the NSApp event loop is managed by the tray/caller
+	<-d.closeCh
 	return nil
 }
 
 func (d *darwinListener) Close() error {
-	C.voxStopMonitor()
-	C.voxStopAppLoop()
+	d.closeOnce.Do(func() {
+		C.voxStopMonitor()
+		close(d.closeCh)
+	})
 	return nil
 }
 

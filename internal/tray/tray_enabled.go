@@ -3,6 +3,8 @@
 package tray
 
 import (
+	"sync"
+
 	"fyne.io/systray"
 )
 
@@ -11,6 +13,7 @@ import (
 
 type enabledTray struct {
 	statusItem *systray.MenuItem
+	quitOnce   sync.Once
 }
 
 // New returns a real system tray implementation.
@@ -41,6 +44,10 @@ func (t *enabledTray) Run(onReady func(), onQuit func()) {
 			onQuit()
 		}
 	})
+}
+
+func (t *enabledTray) Quit() {
+	t.quitOnce.Do(func() { systray.Quit() })
 }
 
 func (t *enabledTray) SetState(state State) {

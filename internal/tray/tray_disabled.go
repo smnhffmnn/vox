@@ -1,22 +1,32 @@
-//go:build !tray
+//go:build !tray && !darwin
 
 package tray
 
-// noopTray is a no-op implementation when built without the tray tag.
-type noopTray struct{}
+import "sync"
+
+// noopTray is a no-op implementation when built without the tray tag (Linux).
+type noopTray struct {
+	doneCh   chan struct{}
+	doneOnce sync.Once
+}
 
 // New returns a no-op tray when built without the tray build tag.
 func New() Tray {
-	return &noopTray{}
+	return &noopTray{doneCh: make(chan struct{})}
 }
 
 func (t *noopTray) Run(onReady func(), onQuit func()) {
-	// No tray available — just call onReady immediately
 	if onReady != nil {
-		onReady()
+		go onReady()
 	}
-	// Block forever (caller should handle shutdown via other means)
-	select {}
+	<-t.doneCh
+	if onQuit != nil {
+		onQuit()
+	}
+}
+
+func (t *noopTray) Quit() {
+	t.doneOnce.Do(func() { close(t.doneCh) })
 }
 
 func (t *noopTray) SetState(state State) {}

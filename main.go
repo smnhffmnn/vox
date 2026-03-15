@@ -2,12 +2,14 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -22,6 +24,9 @@ import (
 	"github.com/smnhffmnn/vox/internal/tray"
 	"github.com/smnhffmnn/vox/internal/windowctx"
 )
+
+// recordingGen tracks the current recording generation for tray state race prevention.
+var recordingGen atomic.Uint64
 
 // pipelineConfig holds all dependencies needed for the record→transcribe→cleanup→inject pipeline.
 type pipelineConfig struct {
@@ -192,6 +197,9 @@ func runDaemon() {
 	key := hotkey.ParseKey(cfg.Hotkey)
 	listener := hotkey.New(key)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	var (
 		recording   *audio.Recording
 		recordingMu sync.Mutex
@@ -214,7 +222,8 @@ func runDaemon() {
 					}
 					t.SetState(tray.StateProcessing)
 					t.SetStatus("Processing...")
-					go handleStopAndProcess(recording, pcfg)
+					gen := recordingGen.Add(1)
+					go handleStopAndProcess(ctx, recording, pcfg, gen)
 					recording = nil
 					isRecording = false
 				}
@@ -262,7 +271,8 @@ func runDaemon() {
 		}
 		t.SetState(tray.StateProcessing)
 		t.SetStatus("Processing...")
-		go handleStopAndProcess(recording, pcfg)
+		gen := recordingGen.Add(1)
+		go handleStopAndProcess(ctx, recording, pcfg, gen)
 		recording = nil
 		isRecording = false
 	}
@@ -280,30 +290,55 @@ func runDaemon() {
 		}
 	}()
 
+	// Signal → cancel context
+	go func() {
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	// Shutdown coordinator: clean up on context cancel
+	go func() {
+		<-ctx.Done()
+
+		// Stop active recording and clean up temp file
+		recordingMu.Lock()
+		rec := recording
+		recording = nil
+		isRecording = false
+		recordingMu.Unlock()
+
+		if rec != nil {
+			if audioFile, _, err := rec.Stop(); err == nil {
+				os.Remove(audioFile)
+			}
+		}
+
+		listener.Close()
+		t.Quit()
+	}()
+
 	// Run tray (blocks on main thread — required for macOS)
-	// If no tray (notray build), this blocks until quit signal.
 	t.Run(func() {
-		// Tray is ready — set up signal handler to quit
-		go func() {
-			<-sigCh
-			fmt.Fprintln(os.Stderr, "\nvox daemon beendet.")
-			listener.Close()
-			os.Exit(0)
-		}()
+		// Tray is ready
 	}, func() {
 		// Tray quit callback
-		fmt.Fprintln(os.Stderr, "vox daemon beendet.")
-		listener.Close()
-		os.Exit(0)
+		cancel()
 	})
+
+	fmt.Fprintln(os.Stderr, "\nvox daemon beendet.")
 }
 
 // handleStopAndProcess stops a recording, transcribes, cleans up, and injects.
-func handleStopAndProcess(rec *audio.Recording, pcfg *pipelineConfig) {
+// gen is the recording generation at the time this was started — used to avoid
+// resetting tray state if a new recording has started since.
+func handleStopAndProcess(ctx context.Context, rec *audio.Recording, pcfg *pipelineConfig, gen uint64) {
 	audioFile, duration, err := rec.Stop()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "vox: Aufnahme stoppen: %v\n", err)
-		if pcfg.tray != nil {
+		if pcfg.tray != nil && recordingGen.Load() == gen {
 			pcfg.tray.SetState(tray.StateIdle)
 			pcfg.tray.SetStatus("Error: recording failed")
 		}
@@ -312,16 +347,23 @@ func handleStopAndProcess(rec *audio.Recording, pcfg *pipelineConfig) {
 	defer os.Remove(audioFile)
 	fmt.Fprintf(os.Stderr, "  %.1fs aufgenommen\n", duration.Seconds())
 
-	// Detect window context
-	var ctx *windowctx.Context
-	if wctx, err := windowctx.GetContext(); err == nil {
-		ctx = &wctx
+	// Abort if shutdown was requested
+	select {
+	case <-ctx.Done():
+		return
+	default:
 	}
 
-	result, err := transcribeAndCleanup(pcfg, audioFile, ctx)
+	// Detect window context
+	var wctx *windowctx.Context
+	if w, err := windowctx.GetContext(); err == nil {
+		wctx = &w
+	}
+
+	result, err := transcribeAndCleanup(pcfg, audioFile, wctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "vox: %v\n", err)
-		if pcfg.tray != nil {
+		if pcfg.tray != nil && recordingGen.Load() == gen {
 			pcfg.tray.SetState(tray.StateIdle)
 			pcfg.tray.SetStatus("Error")
 		}
@@ -338,8 +380,8 @@ func handleStopAndProcess(rec *audio.Recording, pcfg *pipelineConfig) {
 		notify.Send("vox", result)
 	}
 
-	// Reset tray
-	if pcfg.tray != nil {
+	// Reset tray only if no new recording has started
+	if pcfg.tray != nil && recordingGen.Load() == gen {
 		pcfg.tray.SetState(tray.StateIdle)
 		pcfg.tray.SetStatus("Idle")
 	}

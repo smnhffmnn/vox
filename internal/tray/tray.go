@@ -14,6 +14,8 @@ type Tray interface {
 	// Run starts the tray. It blocks and calls onReady when initialized.
 	// onReady is called on a goroutine — safe to do work there.
 	Run(onReady func(), onQuit func())
+	// Quit stops the tray event loop, causing Run to return. Safe to call multiple times.
+	Quit()
 	// SetState changes the tray icon and tooltip.
 	SetState(state State)
 	// SetStatus sets the status text in the menu.

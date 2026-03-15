@@ -8,8 +8,8 @@ import (
 
 // Send displays a macOS notification with the given title and message.
 func Send(title, message string) error {
-	if len(message) > 100 {
-		message = message[:97] + "..."
+	if runes := []rune(message); len(runes) > 100 {
+		message = string(runes[:97]) + "..."
 	}
 	script := `display notification "` + escapeAppleScript(message) + `" with title "` + escapeAppleScript(title) + `"`
 	return exec.Command("osascript", "-e", script).Run()

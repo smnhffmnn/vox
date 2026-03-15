@@ -41,10 +41,11 @@ type inputEvent struct {
 }
 
 type linuxListener struct {
-	key     Key
-	files   []*os.File
-	closeCh chan struct{}
-	mu      sync.Mutex
+	key       Key
+	files     []*os.File
+	closeCh   chan struct{}
+	closeOnce sync.Once
+	mu        sync.Mutex
 }
 
 // New creates a new hotkey listener for the given key.
@@ -120,13 +121,15 @@ func (l *linuxListener) Listen(onPress func(), onRelease func()) error {
 }
 
 func (l *linuxListener) Close() error {
-	close(l.closeCh)
-	l.mu.Lock()
-	for _, f := range l.files {
-		f.Close()
-	}
-	l.files = nil
-	l.mu.Unlock()
+	l.closeOnce.Do(func() {
+		close(l.closeCh)
+		l.mu.Lock()
+		for _, f := range l.files {
+			f.Close()
+		}
+		l.files = nil
+		l.mu.Unlock()
+	})
 	return nil
 }
 
