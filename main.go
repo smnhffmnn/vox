@@ -17,9 +17,17 @@ import (
 )
 
 func main() {
-	lang := flag.String("lang", "de", "Sprache für Transkription (z.B. de, en)")
-	output := flag.String("output", "stdout", "Ausgabemethode: stdout, clipboard, wtype, ydotool")
-	noCleanup := flag.Bool("raw", false, "LLM-Cleanup überspringen")
+	// Load config file (defaults if missing)
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Config laden fehlgeschlagen: %v\n", err)
+		cfg = config.DefaultConfig()
+	}
+
+	// CLI flags (override config values)
+	lang := flag.String("lang", cfg.Language, "Sprache für Transkription (z.B. de, en)")
+	output := flag.String("output", cfg.Output, "Ausgabemethode: stdout, clipboard, wtype, ydotool")
+	noCleanup := flag.Bool("raw", cfg.Raw, "LLM-Cleanup überspringen")
 	flag.Parse()
 
 	apiKey := os.Getenv("OPENAI_API_KEY")
