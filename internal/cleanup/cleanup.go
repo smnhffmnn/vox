@@ -6,9 +6,101 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
+
+	"github.com/smnhffmnn/vox/internal/windowctx"
 )
 
-const systemPrompt = `Du bist ein Textbereiniger für Spracheingabe. Bereinige den transkribierten Text.
+type appCategory int
+
+const (
+	categoryDefault appCategory = iota
+	categoryChat
+	categoryEmail
+	categoryIDE
+	categoryDocs
+	categoryBrowser
+)
+
+func detectCategory(ctx *windowctx.Context) appCategory {
+	if ctx == nil {
+		return categoryDefault
+	}
+
+	app := strings.ToLower(ctx.AppName)
+	title := strings.ToLower(ctx.WindowTitle)
+
+	// Chat apps
+	for _, name := range []string{"slack", "teams", "discord", "telegram", "signal", "imessage", "messages"} {
+		if strings.Contains(app, name) {
+			return categoryChat
+		}
+	}
+
+	// Email
+	for _, name := range []string{"mail", "gmail", "outlook", "thunderbird"} {
+		if strings.Contains(app, name) || strings.Contains(title, name) {
+			return categoryEmail
+		}
+	}
+
+	// IDE / Terminal
+	for _, name := range []string{"code", "cursor", "intellij", "phpstorm", "webstorm", "xcode", "vim", "neovim", "terminal", "iterm", "alacritty", "kitty"} {
+		if strings.Contains(app, name) {
+			return categoryIDE
+		}
+	}
+
+	// Docs
+	for _, name := range []string{"pages", "docs", "word", "notes", "notion", "obsidian"} {
+		if strings.Contains(app, name) {
+			return categoryDocs
+		}
+	}
+
+	// Browser
+	for _, name := range []string{"firefox", "chrome", "safari", "arc", "brave"} {
+		if strings.Contains(app, name) {
+			return categoryBrowser
+		}
+	}
+
+	return categoryDefault
+}
+
+func toneInstruction(cat appCategory, language string) string {
+	if language == "de" {
+		switch cat {
+		case categoryChat:
+			return "\n- Ton: casual, kurze Sätze, kein Punkt am Satzende"
+		case categoryEmail:
+			return "\n- Ton: formal, korrekte Interpunktion, vollständige Sätze"
+		case categoryIDE:
+			return "\n- Ton: technisch, Fachbegriffe bevorzugen, camelCase/snake_case beibehalten"
+		case categoryDocs:
+			return "\n- Ton: neutral, saubere Interpunktion"
+		case categoryBrowser:
+			return "\n- Ton: neutral"
+		}
+		return ""
+	}
+
+	switch cat {
+	case categoryChat:
+		return "\n- Tone: casual, short sentences, no period at end of sentences"
+	case categoryEmail:
+		return "\n- Tone: formal, correct punctuation, complete sentences"
+	case categoryIDE:
+		return "\n- Tone: technical, prefer technical terms, keep camelCase/snake_case as-is"
+	case categoryDocs:
+		return "\n- Tone: neutral, clean punctuation"
+	case categoryBrowser:
+		return "\n- Tone: neutral"
+	}
+	return ""
+}
+
+const basePromptDE = `Du bist ein Textbereiniger für Spracheingabe. Bereinige den transkribierten Text.
 
 Regeln:
 - Korrigiere Interpunktion und Groß-/Kleinschreibung
@@ -19,6 +111,17 @@ Regeln:
 - Bei gemischter Sprache (DE/EN): Beibehalten wie gesprochen
 - Kürze oder paraphrasiere NICHT — nur bereinigen
 - Gib NUR den bereinigten Text zurück, keine Erklärungen oder Anführungszeichen`
+
+const basePromptEN = `You are a text cleaner for speech input. Clean up the transcribed text.
+
+Rules:
+- Fix punctuation and capitalization
+- Remove filler words only when they carry no meaning
+- Fix obvious transcription errors
+- Keep the original tone and meaning exactly
+- Write technical terms correctly (e.g. "kubernetes" → "Kubernetes", "github" → "GitHub")
+- Do NOT shorten or paraphrase — only clean up
+- Return ONLY the cleaned text, no explanations or quotes`
 
 type Cleaner struct {
 	apiKey string
@@ -50,19 +153,25 @@ type chatResponse struct {
 	} `json:"choices"`
 }
 
-func (c *Cleaner) Cleanup(text string, language string) (string, error) {
-	prompt := systemPrompt
-	if language != "de" {
-		prompt = `You are a text cleaner for speech input. Clean up the transcribed text.
+// Cleanup cleans up transcribed text using an LLM.
+// ctx can be nil — in that case, default tone is used.
+func (c *Cleaner) Cleanup(text, language string, ctx *windowctx.Context, dictionary []string) (string, error) {
+	var prompt string
+	if language == "de" {
+		prompt = basePromptDE
+	} else {
+		prompt = basePromptEN
+	}
 
-Rules:
-- Fix punctuation and capitalization
-- Remove filler words only when they carry no meaning
-- Fix obvious transcription errors
-- Keep the original tone and meaning exactly
-- Write technical terms correctly (e.g. "kubernetes" → "Kubernetes", "github" → "GitHub")
-- Do NOT shorten or paraphrase — only clean up
-- Return ONLY the cleaned text, no explanations or quotes`
+	cat := detectCategory(ctx)
+	prompt += toneInstruction(cat, language)
+
+	if len(dictionary) > 0 {
+		if language == "de" {
+			prompt += "\n- Bevorzugte Schreibweisen (verwende diese exakt so): " + strings.Join(dictionary, ", ")
+		} else {
+			prompt += "\n- Preferred spellings (use these exactly): " + strings.Join(dictionary, ", ")
+		}
 	}
 
 	reqBody := chatRequest{

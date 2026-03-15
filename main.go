@@ -11,6 +11,7 @@ import (
 	"github.com/smnhffmnn/vox/internal/cleanup"
 	"github.com/smnhffmnn/vox/internal/inject"
 	"github.com/smnhffmnn/vox/internal/stt"
+	"github.com/smnhffmnn/vox/internal/windowctx"
 )
 
 func main() {
@@ -22,6 +23,12 @@ func main() {
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
 		fatal("OPENAI_API_KEY ist nicht gesetzt")
+	}
+
+	// Detect window context (non-fatal)
+	var ctx *windowctx.Context
+	if wctx, err := windowctx.GetContext(); err == nil {
+		ctx = &wctx
 	}
 
 	// Start recording
@@ -75,7 +82,7 @@ func main() {
 	if !*noCleanup {
 		fmt.Fprintln(os.Stderr, "Cleaning up...")
 		cleaner := cleanup.NewCleaner(apiKey)
-		cleaned, err := cleaner.Cleanup(raw, *lang)
+		cleaned, err := cleaner.Cleanup(raw, *lang, ctx, nil)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Cleanup fehlgeschlagen, verwende Rohtext: %v\n", err)
 		} else {
