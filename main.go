@@ -33,6 +33,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Dictionary laden fehlgeschlagen: %v\n", err)
 	}
 
+	// Load snippets (non-fatal)
+	snippets, err := config.LoadSnippets()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Snippets laden fehlgeschlagen: %v\n", err)
+	}
+
 	// Detect window context (non-fatal)
 	var ctx *windowctx.Context
 	if wctx, err := windowctx.GetContext(); err == nil {
@@ -97,6 +103,13 @@ func main() {
 		} else {
 			result = cleaned
 			fmt.Fprintf(os.Stderr, "> %s\n\n", result)
+		}
+	}
+
+	// Snippet matching (after cleanup, before injection)
+	if len(snippets) > 0 {
+		if expanded, ok := config.MatchSnippet(result, snippets); ok {
+			result = expanded
 		}
 	}
 
