@@ -113,11 +113,37 @@ func gnomeContext() (Context, error) {
 		return Context{}, err
 	}
 
-	// gdbus output is a GVariant string, parse basic info
-	s := string(out)
+	// gdbus output is a GVariant tuple like: ('Firefox', 'GitHub - Mozilla Firefox')
+	// Extract the two quoted strings.
+	appName, windowTitle := parseGVariantTuple(strings.TrimSpace(string(out)))
 	return Context{
-		WindowTitle: strings.TrimSpace(s),
+		AppName:     appName,
+		AppID:       appName,
+		WindowTitle: windowTitle,
 	}, nil
+}
+
+// parseGVariantTuple extracts up to two single-quoted strings from a GVariant tuple.
+func parseGVariantTuple(s string) (string, string) {
+	var values []string
+	for i := 0; i < len(s) && len(values) < 2; i++ {
+		if s[i] == '\'' {
+			end := strings.IndexByte(s[i+1:], '\'')
+			if end < 0 {
+				break
+			}
+			values = append(values, s[i+1:i+1+end])
+			i = i + 1 + end
+		}
+	}
+	switch len(values) {
+	case 2:
+		return values[0], values[1]
+	case 1:
+		return values[0], ""
+	default:
+		return "", s
+	}
 }
 
 func x11Context() (Context, error) {

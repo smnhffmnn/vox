@@ -63,8 +63,10 @@ func parseSnippets(data string) ([]Snippet, error) {
 			}
 		} else if strings.HasPrefix(trimmed, "text:") && current != nil {
 			current.Text = extractYAMLValue(trimmed[len("text:"):])
-			// Handle escaped newlines
+			// Handle escaped newlines: \\n → literal \n, \n → newline
+			current.Text = strings.ReplaceAll(current.Text, `\\n`, "\x00")
 			current.Text = strings.ReplaceAll(current.Text, `\n`, "\n")
+			current.Text = strings.ReplaceAll(current.Text, "\x00", `\n`)
 		}
 	}
 

@@ -26,7 +26,24 @@ func ydotool(text string) error {
 }
 
 func keystroke(text string) error {
-	script := `tell application "System Events" to keystroke "` + escapeAppleScript(text) + `"`
+	lines := strings.Split(text, "\n")
+	var parts []string
+	for i, line := range lines {
+		if i > 0 {
+			parts = append(parts, `key code 36`) // Return
+		}
+		if line != "" {
+			parts = append(parts, `keystroke "`+escapeAppleScript(line)+`"`)
+		}
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	script := `tell application "System Events"` + "\n"
+	for _, p := range parts {
+		script += "\t" + p + "\n"
+	}
+	script += `end tell`
 	cmd := exec.Command("osascript", "-e", script)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("osascript keystroke fehlgeschlagen: %w", err)
