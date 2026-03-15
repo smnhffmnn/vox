@@ -20,19 +20,28 @@ Cross-platform speech-to-text tool for Linux and macOS. Hotkey drücken, spreche
 - PipeWire (`pw-record`)
 - Optional: `wl-clipboard` (clipboard), `wtype` (Wayland keystroke), `ydotool` (universal keystroke)
 - Window context: `xdotool`/`xprop` (X11), `swaymsg` (sway), `hyprctl` (Hyprland)
+- Notifications: `notify-send`
+- Audio feedback: `paplay` or `pw-play`
 
 ### macOS
 - sox (`brew install sox`)
 - `pbcopy` (built-in, clipboard)
-- `osascript` (built-in, keystroke injection + window context)
+- `osascript` (built-in, keystroke injection + window context + notifications)
+- Accessibility permission required for global hotkey monitoring
 
 ## Installation
 
 ```bash
+# Standard build (no tray icon)
 go build -o vox .
+
+# With system tray icon (requires CGo)
+go build -tags tray -o vox .
 ```
 
 ## Usage
+
+### CLI mode (one-shot)
 
 ```bash
 # Default: German, stdout
@@ -52,6 +61,21 @@ go build -o vox .
 ```
 
 Press Enter to stop recording.
+
+### Daemon mode (background, hotkey-triggered)
+
+```bash
+# Start daemon with default settings
+./vox daemon
+
+# Daemon with custom output method
+./vox daemon -output clipboard
+
+# Daemon with English transcription
+./vox daemon -lang en
+```
+
+The daemon runs in the background and listens for a global hotkey. When pressed, it starts recording; when released (hold mode) or pressed again (toggle mode), it stops, transcribes, cleans up, and injects the text.
 
 ## Flags
 
@@ -73,7 +97,20 @@ All config files live in `~/.config/vox/`.
 language: de
 output: clipboard
 raw: false
+
+# Daemon settings
+hotkey: right_option    # right_option, right_alt, f13-f20
+mode: hold              # hold (hold-to-talk) or toggle (press to start/stop)
+notifications: true     # Desktop notification after transcription
+audio_feedback: true    # Sound on recording start/stop
 ```
+
+#### Hotkey options
+
+| Key | macOS | Linux |
+|-----|-------|-------|
+| `right_option` / `right_alt` | Right Option (⌥) | Right Alt |
+| `f13` - `f20` | F13-F20 | F13-F20 |
 
 ### dictionary.txt
 
@@ -111,10 +148,20 @@ vox detects the focused application and adapts the LLM cleanup tone:
 | Docs | Pages, Docs, Word, Notes, Notion, Obsidian | Neutral, clean punctuation |
 | Browser | Firefox, Chrome, Safari, Arc, Brave | Neutral |
 
+## System tray
+
+When built with `-tags tray`, the daemon shows a system tray icon with three states:
+
+- **Gray circle** — Idle
+- **Red circle** — Recording
+- **Orange circle** — Processing (transcribing/cleaning)
+
+The tray menu shows the current status and a "Quit" option. Without the tray build tag, the daemon runs headless.
+
 ## Architecture
 
 ```
-main.go                              CLI, flow orchestration
+main.go                              CLI + daemon, flow orchestration
 internal/
   audio/
     recorder.go                      Shared types (Recording, Stop, File)
@@ -137,9 +184,32 @@ internal/
     config.go                        Config file parsing
     dictionary.go                    Dictionary loading
     snippets.go                      Snippet loading and matching
+  hotkey/
+    hotkey.go                        Interface + Key types
+    hotkey_linux.go                  evdev (/dev/input/event*)
+    hotkey_darwin.go                 CGo + NSEvent globalMonitor
+    hotkey_darwin.c                  Objective-C implementation
+  tray/
+    tray.go                          Tray interface
+    tray_enabled.go                  fyne.io/systray (build tag: tray)
+    tray_disabled.go                 No-op stubs (build tag: !tray)
+    icondata.go                      Programmatic PNG icon generation
+  notify/
+    notify_darwin.go                 osascript display notification
+    notify_linux.go                  notify-send
+  feedback/
+    feedback_darwin.go               afplay with system sounds
+    feedback_linux.go                paplay/pw-play
 ```
 
-Single binary, no external Go dependencies. API calls via `net/http`.
+## Build tags
+
+| Tag | Effect |
+|-----|--------|
+| `tray` | Enable system tray icon (requires fyne.io/systray, CGo on macOS) |
+| (none) | Headless build, no tray, no CGo dependency for tray |
+
+Note: The hotkey system always requires CGo on macOS (NSEvent monitoring). On Linux, no CGo is needed.
 
 ## Cost
 

@@ -16,8 +16,8 @@ Systemweites Open-Source Diktiertool für Linux + macOS (wie WisprFlow). Single 
 - [x] Text-Output macOS: pbcopy (clipboard), osascript (keystroke injection)
 - [x] Text-Output Linux: wl-copy, wtype, ydotool
 - [x] Build-Tags für plattformspezifischen Code (`_linux.go` / `_darwin.go`)
-- [ ] Systemweiter Hotkey (Hold-to-Talk + Toggle-Modus)
-- [ ] Daemon-Modus (Hintergrundprozess, reagiert auf Hotkey)
+- [x] Systemweiter Hotkey (Hold-to-Talk + Toggle-Modus)
+- [x] Daemon-Modus (Hintergrundprozess, reagiert auf Hotkey)
 
 ### P1 — Intelligenz
 
@@ -46,9 +46,9 @@ Systemweites Open-Source Diktiertool für Linux + macOS (wie WisprFlow). Single 
 
 ### P3 — Polish
 
-- [ ] System-Tray-Icon mit Status (idle/recording/processing)
-- [ ] Desktop-Notification bei fertigem Text
-- [ ] Audio-Feedback (kurzer Ton bei Start/Stop)
+- [x] System-Tray-Icon mit Status (idle/recording/processing)
+- [x] Desktop-Notification bei fertigem Text
+- [x] Audio-Feedback (kurzer Ton bei Start/Stop)
 - [x] Config-Datei (~/.config/vox/config.yaml)
 - [ ] History/Log der letzten Transkriptionen
 - [ ] Latenz-Optimierung (Streaming ASR)
@@ -82,9 +82,21 @@ internal/
     dictionary.go               Dictionary loading
     snippets.go                 Snippet loading and matching
   hotkey/
-    hotkey.go                   Interface
-    hotkey_linux.go             evdev / D-Bus GlobalShortcuts
-    hotkey_darwin.go            CGo + Carbon/Cocoa
+    hotkey.go                   Interface + Key types
+    hotkey_linux.go             evdev (/dev/input/event*)
+    hotkey_darwin.go            CGo + NSEvent globalMonitor
+    hotkey_darwin.c             Objective-C implementation
+  tray/
+    tray.go                     Tray interface + State types
+    tray_enabled.go             fyne.io/systray (build tag: tray)
+    tray_disabled.go            No-op stubs (build tag: !tray)
+    icondata.go                 Programmatic PNG icon generation
+  notify/
+    notify_darwin.go            osascript display notification
+    notify_linux.go             notify-send
+  feedback/
+    feedback_darwin.go          afplay with system sounds
+    feedback_linux.go           paplay/pw-play with freedesktop sounds
 ```
 
 ## Kontext-Awareness Detail
