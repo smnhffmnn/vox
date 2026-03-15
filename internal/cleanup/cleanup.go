@@ -11,6 +11,11 @@ import (
 	"github.com/smnhffmnn/vox/internal/windowctx"
 )
 
+// CleanerInterface is implemented by all cleanup backends.
+type CleanerInterface interface {
+	Cleanup(text, language string, ctx *windowctx.Context, dictionary []string) (string, error)
+}
+
 type appCategory int
 
 const (
@@ -21,6 +26,24 @@ const (
 	categoryDocs
 	categoryBrowser
 )
+
+// CategoryName returns the string name for an app category.
+func CategoryName(ctx *windowctx.Context) string {
+	switch detectCategory(ctx) {
+	case categoryChat:
+		return "chat"
+	case categoryEmail:
+		return "email"
+	case categoryIDE:
+		return "ide"
+	case categoryDocs:
+		return "docs"
+	case categoryBrowser:
+		return "browser"
+	default:
+		return "default"
+	}
+}
 
 func detectCategory(ctx *windowctx.Context) appCategory {
 	if ctx == nil {
@@ -123,15 +146,55 @@ Rules:
 - Do NOT shorten or paraphrase — only clean up
 - Return ONLY the cleaned text, no explanations or quotes`
 
+// Cleaner uses an LLM to clean up transcribed text.
 type Cleaner struct {
-	apiKey string
-	model  string
+	apiKey  string
+	baseURL string
+	model   string
 }
 
+// NewCleaner creates a Cleaner with default OpenAI settings.
 func NewCleaner(apiKey string) *Cleaner {
 	return &Cleaner{
-		apiKey: apiKey,
-		model:  "gpt-4o-mini",
+		apiKey:  apiKey,
+		baseURL: "https://api.openai.com/v1",
+		model:   "gpt-4o-mini",
+	}
+}
+
+// NewCleanerWithConfig creates a Cleaner with configurable base URL and model.
+func NewCleanerWithConfig(apiKey, baseURL, model string) *Cleaner {
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	if model == "" {
+		model = "gpt-4o-mini"
+	}
+	return &Cleaner{
+		apiKey:  apiKey,
+		baseURL: baseURL,
+		model:   model,
+	}
+}
+
+// NewCleanerFromConfig creates a CleanerInterface based on the backend name.
+func NewCleanerFromConfig(backend, apiKey, baseURL, model string) CleanerInterface {
+	switch backend {
+	case "ollama":
+		if baseURL == "" {
+			baseURL = "http://localhost:11434/v1"
+		}
+		if model == "" {
+			model = "llama3.2"
+		}
+		return NewCleanerWithConfig("", baseURL, model)
+	case "none":
+		return &NilCleaner{}
+	default:
+		if model == "" {
+			model = "gpt-4o-mini"
+		}
+		return NewCleanerWithConfig(apiKey, "https://api.openai.com/v1", model)
 	}
 }
 
@@ -155,16 +218,26 @@ type chatResponse struct {
 
 // Cleanup cleans up transcribed text using an LLM.
 // ctx can be nil — in that case, default tone is used.
+// customPrompt, if non-empty, replaces the default system prompt entirely.
 func (c *Cleaner) Cleanup(text, language string, ctx *windowctx.Context, dictionary []string) (string, error) {
-	var prompt string
-	if language == "de" {
-		prompt = basePromptDE
-	} else {
-		prompt = basePromptEN
-	}
+	return c.CleanupWithPrompt(text, language, ctx, dictionary, "")
+}
 
-	cat := detectCategory(ctx)
-	prompt += toneInstruction(cat, language)
+// CleanupWithPrompt is like Cleanup but accepts an optional custom system prompt.
+func (c *Cleaner) CleanupWithPrompt(text, language string, ctx *windowctx.Context, dictionary []string, customPrompt string) (string, error) {
+	var prompt string
+	if customPrompt != "" {
+		prompt = customPrompt
+	} else {
+		if language == "de" {
+			prompt = basePromptDE
+		} else {
+			prompt = basePromptEN
+		}
+
+		cat := detectCategory(ctx)
+		prompt += toneInstruction(cat, language)
+	}
 
 	if len(dictionary) > 0 {
 		if language == "de" {
@@ -187,23 +260,26 @@ func (c *Cleaner) Cleanup(text, language string, ctx *windowctx.Context, diction
 		return "", err
 	}
 
-	req, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewReader(jsonBody))
+	endpoint := c.baseURL + "/chat/completions"
+	req, err := http.NewRequest("POST", endpoint, bytes.NewReader(jsonBody))
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("OpenAI API Anfrage: %w", err)
+		return "", fmt.Errorf("LLM API Anfrage: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("OpenAI API Fehler (%d): %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("LLM API Fehler (%d): %s", resp.StatusCode, string(body))
 	}
 
 	var result chatResponse
@@ -212,8 +288,15 @@ func (c *Cleaner) Cleanup(text, language string, ctx *windowctx.Context, diction
 	}
 
 	if len(result.Choices) == 0 {
-		return "", fmt.Errorf("keine Antwort von OpenAI erhalten")
+		return "", fmt.Errorf("keine Antwort von LLM erhalten")
 	}
 
 	return result.Choices[0].Message.Content, nil
+}
+
+// NilCleaner returns text unchanged. Used when LLM backend is "none".
+type NilCleaner struct{}
+
+func (n *NilCleaner) Cleanup(text, language string, ctx *windowctx.Context, dictionary []string) (string, error) {
+	return text, nil
 }

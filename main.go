@@ -19,6 +19,7 @@ import (
 	"github.com/smnhffmnn/vox/internal/feedback"
 	"github.com/smnhffmnn/vox/internal/hotkey"
 	"github.com/smnhffmnn/vox/internal/inject"
+	"github.com/smnhffmnn/vox/internal/keychain"
 	"github.com/smnhffmnn/vox/internal/notify"
 	"github.com/smnhffmnn/vox/internal/stt"
 	"github.com/smnhffmnn/vox/internal/tray"
@@ -30,6 +31,7 @@ var recordingGen atomic.Uint64
 
 // pipelineConfig holds all dependencies needed for the record→transcribe→cleanup→inject pipeline.
 type pipelineConfig struct {
+	cfg           *config.Config
 	apiKey        string
 	lang          string
 	output        string
@@ -53,6 +55,29 @@ func main() {
 	runCLI()
 }
 
+// resolveAPIKey returns the OpenAI API key from env or keychain.
+// Returns empty string if not found (caller decides if that's an error).
+func resolveAPIKey() string {
+	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+		return key
+	}
+	if key, err := keychain.Get("vox", "openai-api-key"); err == nil && key != "" {
+		return key
+	}
+	return ""
+}
+
+// requireAPIKey returns the API key or fatals if the backend needs one and it's missing.
+func requireAPIKey(cfg *config.Config) string {
+	key := resolveAPIKey()
+	needsKey := (cfg.STTBackend == "" || cfg.STTBackend == "openai") ||
+		(cfg.LLMBackend == "" || cfg.LLMBackend == "openai")
+	if key == "" && needsKey {
+		fatal("OPENAI_API_KEY ist nicht gesetzt (weder als ENV noch im Keychain)")
+	}
+	return key
+}
+
 func runCLI() {
 	// Load config file (defaults if missing)
 	cfg, err := config.Load()
@@ -67,10 +92,7 @@ func runCLI() {
 	noCleanup := flag.Bool("raw", cfg.Raw, "LLM-Cleanup überspringen")
 	flag.Parse()
 
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		fatal("OPENAI_API_KEY ist nicht gesetzt")
-	}
+	apiKey := requireAPIKey(cfg)
 
 	// Load dictionary (non-fatal)
 	dictionary, err := config.LoadDictionary()
@@ -128,6 +150,7 @@ func runCLI() {
 
 	// Transcribe and inject
 	pcfg := &pipelineConfig{
+		cfg:        cfg,
 		apiKey:     apiKey,
 		lang:       *lang,
 		output:     *output,
@@ -164,10 +187,7 @@ func runDaemon() {
 	noCleanup := flag.Bool("raw", cfg.Raw, "LLM-Cleanup überspringen")
 	flag.Parse()
 
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		fatal("OPENAI_API_KEY ist nicht gesetzt")
-	}
+	apiKey := requireAPIKey(cfg)
 
 	dictionary, err := config.LoadDictionary()
 	if err != nil {
@@ -182,6 +202,7 @@ func runDaemon() {
 	t := tray.New()
 
 	pcfg := &pipelineConfig{
+		cfg:           cfg,
 		apiKey:        apiKey,
 		lang:          *lang,
 		output:        *output,
@@ -390,7 +411,7 @@ func handleStopAndProcess(ctx context.Context, rec *audio.Recording, pcfg *pipel
 // transcribeAndCleanup runs the STT → cleanup → snippet-match pipeline.
 func transcribeAndCleanup(pcfg *pipelineConfig, audioFile string, ctx *windowctx.Context) (string, error) {
 	whisperPrompt := strings.Join(pcfg.dictionary, ", ")
-	transcriber := stt.NewOpenAI(pcfg.apiKey)
+	transcriber := stt.NewTranscriber(pcfg.cfg.STTBackend, pcfg.apiKey, pcfg.cfg.STTURL)
 	raw, err := transcriber.Transcribe(audioFile, pcfg.lang, whisperPrompt)
 	if err != nil {
 		return "", fmt.Errorf("Transkription: %w", err)
@@ -400,7 +421,7 @@ func transcribeAndCleanup(pcfg *pipelineConfig, audioFile string, ctx *windowctx
 	result := raw
 
 	if !pcfg.raw {
-		cleaner := cleanup.NewCleaner(pcfg.apiKey)
+		cleaner := cleanup.NewCleanerFromConfig(pcfg.cfg.LLMBackend, pcfg.apiKey, pcfg.cfg.LLMURL, pcfg.cfg.LLMModel)
 		cleaned, err := cleaner.Cleanup(raw, pcfg.lang, ctx, pcfg.dictionary)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Cleanup fehlgeschlagen, verwende Rohtext: %v\n", err)
