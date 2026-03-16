@@ -34,11 +34,14 @@ Cross-platform speech-to-text tool for Linux and macOS. Hotkey drücken, spreche
 ## Installation
 
 ```bash
-# Standard build (no tray icon)
-go build -o vox .
+# CLI + daemon with tray (recommended for macOS)
+make build
 
-# With system tray icon (requires CGo)
-go build -tags tray -o vox .
+# macOS .app bundle (double-click to launch daemon)
+make app
+
+# Without tray (headless, no CGo dependency for tray)
+go build -o vox .
 ```
 
 ## Usage

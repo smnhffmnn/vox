@@ -195,7 +195,13 @@ func runDaemon() {
 	noCleanup := flag.Bool("raw", cfg.Raw, "LLM-Cleanup überspringen")
 	flag.Parse()
 
-	apiKey := requireAPIKey(cfg)
+	// In daemon mode, don't fatal on missing API key — start UI so user can set it
+	apiKey := resolveAPIKey()
+	needsKey := (cfg.STTBackend == "" || cfg.STTBackend == "openai") ||
+		(cfg.LLMBackend == "" || cfg.LLMBackend == "openai")
+	if apiKey == "" && needsKey {
+		fmt.Fprintln(os.Stderr, "vox: Kein API-Key gefunden. Starte trotzdem — Key kann in der Settings-UI gesetzt werden.")
+	}
 
 	dictionary, err := config.LoadDictionary()
 	if err != nil {
@@ -755,8 +761,17 @@ func transcribeAndCleanup(pcfg *pipelineConfig, audioFile string, ctx *windowctx
 	llmModel := pcfg.cfg.LLMModel
 	pcfg.cfg.RUnlock()
 
+	// Re-resolve API key on each transcription (may have been set via UI since daemon start)
+	apiKey := pcfg.apiKey
+	if apiKey == "" {
+		apiKey = resolveAPIKey()
+	}
+	if apiKey == "" && (sttBackend == "" || sttBackend == "openai" || llmBackend == "" || llmBackend == "openai") {
+		return transcriptionResult{}, fmt.Errorf("Kein API-Key gesetzt. Bitte in der Settings-UI konfigurieren (http://localhost:%d)", pcfg.cfg.UIPort)
+	}
+
 	whisperPrompt := strings.Join(pcfg.dictionary, ", ")
-	transcriber := stt.NewTranscriber(sttBackend, pcfg.apiKey, sttURL)
+	transcriber := stt.NewTranscriber(sttBackend, apiKey, sttURL)
 	raw, err := transcriber.Transcribe(audioFile, pcfg.lang, whisperPrompt)
 	if err != nil {
 		return transcriptionResult{}, fmt.Errorf("Transkription: %w", err)
@@ -766,7 +781,7 @@ func transcribeAndCleanup(pcfg *pipelineConfig, audioFile string, ctx *windowctx
 	result := raw
 
 	if !pcfg.raw {
-		cleaner := cleanup.NewCleanerFromConfig(llmBackend, pcfg.apiKey, llmURL, llmModel)
+		cleaner := cleanup.NewCleanerFromConfig(llmBackend, apiKey, llmURL, llmModel)
 		cleaned, err := cleanupWithPrompts(cleaner, raw, pcfg.lang, ctx, pcfg.dictionary, pcfg.customPrompts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Cleanup fehlgeschlagen, verwende Rohtext: %v\n", err)
