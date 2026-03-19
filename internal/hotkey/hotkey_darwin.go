@@ -13,7 +13,11 @@ void voxStopMonitor(void);
 */
 import "C"
 
-import "sync"
+import (
+	"fmt"
+	"os"
+	"sync"
+)
 
 var (
 	mu         sync.Mutex
@@ -23,6 +27,7 @@ var (
 
 //export goHotkeyDown
 func goHotkeyDown() {
+	fmt.Fprintln(os.Stderr, "vox: [DEBUG] hotkey DOWN")
 	mu.Lock()
 	f := onPressF
 	mu.Unlock()
@@ -33,6 +38,7 @@ func goHotkeyDown() {
 
 //export goHotkeyUp
 func goHotkeyUp() {
+	fmt.Fprintln(os.Stderr, "vox: [DEBUG] hotkey UP")
 	mu.Lock()
 	f := onReleaseF
 	mu.Unlock()
@@ -62,10 +68,11 @@ func (d *darwinListener) Listen(onPress func(), onRelease func()) error {
 	mu.Unlock()
 
 	keyCode := darwinKeyCode(d.key)
+	fmt.Fprintf(os.Stderr, "vox: [DEBUG] starting hotkey monitor for keyCode=%d (key=%s)\n", keyCode, d.key)
 	C.voxSetTargetKeyCode(C.int(keyCode))
 	C.voxStartMonitor()
+	fmt.Fprintln(os.Stderr, "vox: [DEBUG] hotkey monitor started")
 
-	// Block until Close() — the NSApp event loop is managed by the tray/caller
 	<-d.closeCh
 	return nil
 }

@@ -1,17 +1,16 @@
-.PHONY: build app clean
+.PHONY: dev build clean
 
+WAILS := $(shell which wails3 2>/dev/null || echo $(HOME)/go/bin/wails3)
+
+# Development with hot-reload
+dev:
+	$(WAILS) dev
+
+# Production build for current platform
 build:
-	go build -tags tray -o vox .
-
-app: build
-	rm -rf Vox.app
-	mkdir -p Vox.app/Contents/MacOS
-	cp vox Vox.app/Contents/MacOS/vox
-	cp packaging/Info.plist Vox.app/Contents/Info.plist
-	cp packaging/vox-launcher Vox.app/Contents/MacOS/vox-launcher
-	chmod +x Vox.app/Contents/MacOS/vox-launcher
-	@echo "Built Vox.app"
+	$(WAILS) build
 
 clean:
-	rm -f vox
-	rm -rf Vox.app
+	rm -rf build/bin
+	rm -rf frontend/dist
+	rm -rf frontend/node_modules

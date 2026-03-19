@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/smnhffmnn/vox/internal/windowctx"
 )
@@ -278,25 +279,26 @@ func (c *Cleaner) CleanupWithCustomPrompts(text, language string, ctx *windowctx
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("LLM API Anfrage: %w", err)
+		return "", fmt.Errorf("LLM API request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("LLM API Fehler (%d): %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("LLM API error (%d): %s", resp.StatusCode, string(body))
 	}
 
 	var result chatResponse
 	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("Antwort parsen: %w", err)
+		return "", fmt.Errorf("response parse: %w", err)
 	}
 
 	if len(result.Choices) == 0 {
-		return "", fmt.Errorf("keine Antwort von LLM erhalten")
+		return "", fmt.Errorf("no response from LLM")
 	}
 
 	return result.Choices[0].Message.Content, nil

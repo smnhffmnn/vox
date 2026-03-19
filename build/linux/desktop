@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=Vox
+Comment=Speech-to-Text Dictation Tool
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/vox %u
+Terminal=false
+Type=Application
+Icon=vox
+Categories=Utility;
+StartupWMClass=vox
+
+ 

@@ -29,8 +29,6 @@ type Config struct {
 	LLMURL     string // Base URL for Ollama
 	LLMModel   string // Model name override
 
-	// UI
-	UIPort int // Web UI port (default: 7890)
 }
 
 // Lock acquires a write lock on the config.
@@ -45,7 +43,7 @@ func (c *Config) RUnlock() { c.mu.RUnlock() }
 func DefaultConfig() *Config {
 	return &Config{
 		Language:      "de",
-		Output:        "stdout",
+		Output:        "wtype",
 		Raw:           false,
 		Hotkey:        "right_option",
 		Mode:             "hold",
@@ -55,7 +53,6 @@ func DefaultConfig() *Config {
 		AudioFeedback: true,
 		STTBackend:    "openai",
 		LLMBackend:    "openai",
-		UIPort:        7890,
 	}
 }
 
@@ -124,9 +121,6 @@ func (cfg *Config) Save() error {
 	if cfg.LLMModel != "" {
 		b.WriteString(fmt.Sprintf("llm_model: %s\n", cfg.LLMModel))
 	}
-	b.WriteString("\n# UI\n")
-	b.WriteString(fmt.Sprintf("ui_port: %d\n", cfg.UIPort))
-
 	path := filepath.Join(dir, "config.yaml")
 	return os.WriteFile(path, []byte(b.String()), 0o644)
 }
@@ -176,10 +170,6 @@ func parseConfig(data string, cfg *Config) {
 			cfg.LLMURL = value
 		case "llm_model":
 			cfg.LLMModel = value
-		case "ui_port":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.UIPort = v
-			}
 		}
 	}
 }

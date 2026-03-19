@@ -1,6 +1,19 @@
-# Binary
+# Build output
+build/bin/
 vox
-Vox.app
+*.exe
+
+# Frontend
+frontend/dist/
+frontend/node_modules/
+frontend/wailsjs/
 
 # OS
 .DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

@@ -1,0 +1,15 @@
+{
+	"fixed": {
+		"file_version": "1.0.0"
+	},
+	"info": {
+		"0000": {
+			"ProductVersion": "1.0.0",
+			"CompanyName": "Simon Hoffmann",
+			"FileDescription": "Speech-to-Text Dictation Tool",
+			"LegalCopyright": "(c) 2025, Simon Hoffmann",
+			"ProductName": "Vox",
+			"Comments": "Cross-platform voice-to-text with context-aware cleanup"
+		}
+	}
+}

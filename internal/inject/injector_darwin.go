@@ -12,7 +12,7 @@ func clipboard(text string) error {
 	cmd := exec.Command("pbcopy")
 	cmd.Stdin = strings.NewReader(text)
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("pbcopy fehlgeschlagen: %w", err)
+		return fmt.Errorf("pbcopy failed: %w", err)
 	}
 	return nil
 }
@@ -46,7 +46,7 @@ func keystroke(text string) error {
 	script += `end tell`
 	cmd := exec.Command("osascript", "-e", script)
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("osascript keystroke fehlgeschlagen: %w", err)
+		return fmt.Errorf("osascript keystroke failed: %w", err)
 	}
 	return nil
 }

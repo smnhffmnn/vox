@@ -62,10 +62,10 @@ func (l *linuxListener) Listen(onPress func(), onRelease func()) error {
 	// Find all keyboard input devices
 	devices, err := findKeyboardDevices()
 	if err != nil {
-		return fmt.Errorf("keyboard devices finden: %w", err)
+		return fmt.Errorf("find keyboard devices: %w", err)
 	}
 	if len(devices) == 0 {
-		return fmt.Errorf("keine Keyboard-Devices gefunden (input-Gruppe?)")
+		return fmt.Errorf("no keyboard devices found (are you in the input group?)")
 	}
 
 	var wg sync.WaitGroup
@@ -122,13 +122,15 @@ func (l *linuxListener) Listen(onPress func(), onRelease func()) error {
 
 func (l *linuxListener) Close() error {
 	l.closeOnce.Do(func() {
-		close(l.closeCh)
+		// Close files first to unblock any goroutines stuck in f.Read()
 		l.mu.Lock()
 		for _, f := range l.files {
 			f.Close()
 		}
 		l.files = nil
 		l.mu.Unlock()
+		// Then signal the channel so Listen() returns
+		close(l.closeCh)
 	})
 	return nil
 }

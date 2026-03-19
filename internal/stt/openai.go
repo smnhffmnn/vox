@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 type OpenAI struct {
@@ -30,7 +31,7 @@ type whisperResponse struct {
 func (o *OpenAI) Transcribe(audioFile, language, prompt string) (string, error) {
 	f, err := os.Open(audioFile)
 	if err != nil {
-		return "", fmt.Errorf("Audiodatei öffnen: %w", err)
+		return "", fmt.Errorf("open audio file: %w", err)
 	}
 	defer f.Close()
 
@@ -65,21 +66,22 @@ func (o *OpenAI) Transcribe(audioFile, language, prompt string) (string, error) 
 	req.Header.Set("Authorization", "Bearer "+o.apiKey)
 	req.Header.Set("Content-Type", w.FormDataContentType())
 
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("OpenAI API Anfrage: %w", err)
+		return "", fmt.Errorf("OpenAI API request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("OpenAI API Fehler (%d): %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("OpenAI API error (%d): %s", resp.StatusCode, string(body))
 	}
 
 	var result whisperResponse
 	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("Antwort parsen: %w", err)
+		return "", fmt.Errorf("response parse: %w", err)
 	}
 
 	return result.Text, nil
