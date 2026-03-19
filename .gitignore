@@ -1,12 +1,15 @@
 # Build output
 build/bin/
+build/linux/
 vox
 *.exe
+.task/
 
 # Frontend
 frontend/dist/
 frontend/node_modules/
 frontend/wailsjs/
+frontend/bindings/
 
 # OS
 .DS_Store
