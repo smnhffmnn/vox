@@ -1,0 +1,214 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  # Create the GitHub Release first
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ github.ref_name }} \
+            --title "v${GITHUB_REF_NAME#v}" \
+            --generate-notes
+
+  # Build on each platform natively
+  build:
+    needs: create-release
+    strategy:
+      matrix:
+        include:
+          - runner: macos-latest
+            goos: darwin
+            goarch: arm64
+            binary: vox
+            archive: tar.gz
+          - runner: windows-latest
+            goos: windows
+            goarch: amd64
+            binary: vox.exe
+            archive: zip
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm ci && npm run build
+
+      - name: Build binary
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          go build -ldflags "-s -w -X main.version=${VERSION}" \
+            -o ${{ matrix.binary }} .
+        shell: bash
+
+      - name: Create archive
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            7z a vox_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.zip \
+              ${{ matrix.binary }} LICENSE
+          else
+            tar czf vox_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz \
+              ${{ matrix.binary }} LICENSE
+          fi
+        shell: bash
+
+      - name: Create macOS .app bundle
+        if: matrix.goos == 'darwin'
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+
+          # Create .app directory structure
+          mkdir -p vox.app/Contents/MacOS
+          mkdir -p vox.app/Contents/Resources
+
+          # Copy binary
+          cp vox vox.app/Contents/MacOS/vox
+
+          # Copy Info.plist with updated version
+          sed "s/1.0.0/${VERSION}/g" build/darwin/Info.plist > vox.app/Contents/Info.plist
+
+          # Generate .icns from appicon.png
+          mkdir -p /tmp/icon.iconset
+          for size in 16 32 128 256 512; do
+            sips -z $size $size build/appicon.png --out /tmp/icon.iconset/icon_${size}x${size}.png 2>/dev/null
+          done
+          sips -z 32 32 build/appicon.png --out /tmp/icon.iconset/icon_16x16@2x.png 2>/dev/null
+          sips -z 64 64 build/appicon.png --out /tmp/icon.iconset/icon_32x32@2x.png 2>/dev/null
+          sips -z 256 256 build/appicon.png --out /tmp/icon.iconset/icon_128x128@2x.png 2>/dev/null
+          sips -z 512 512 build/appicon.png --out /tmp/icon.iconset/icon_256x256@2x.png 2>/dev/null
+          sips -z 1024 1024 build/appicon.png --out /tmp/icon.iconset/icon_512x512@2x.png 2>/dev/null
+          iconutil -c icns /tmp/icon.iconset -o vox.app/Contents/Resources/appicon.icns
+          rm -rf /tmp/icon.iconset
+
+          # Add icon reference to Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile appicon" vox.app/Contents/Info.plist
+
+          # Create .app archive
+          tar czf vox_${VERSION}_darwin_${GOARCH}_app.tar.gz vox.app
+        shell: bash
+        env:
+          GOARCH: ${{ matrix.goarch }}
+
+      - name: Upload to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            gh release upload ${{ github.ref_name }} \
+              vox_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.zip --clobber
+          else
+            gh release upload ${{ github.ref_name }} \
+              vox_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz --clobber
+          fi
+        shell: bash
+
+      - name: Upload .app bundle
+        if: matrix.goos == 'darwin'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          gh release upload ${{ github.ref_name }} \
+            vox_${VERSION}_darwin_${{ matrix.goarch }}_app.tar.gz --clobber
+        shell: bash
+
+  # Update Homebrew tap
+  homebrew:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update Homebrew tap
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+
+          # Download and checksum both archives
+          FORMULA_URL="https://github.com/smnhffmnn/vox/releases/download/${GITHUB_REF_NAME}/vox_${VERSION}_darwin_arm64.tar.gz"
+          CASK_URL="https://github.com/smnhffmnn/vox/releases/download/${GITHUB_REF_NAME}/vox_${VERSION}_darwin_arm64_app.tar.gz"
+
+          curl -sL "$FORMULA_URL" -o formula.tar.gz
+          curl -sL "$CASK_URL" -o cask.tar.gz
+
+          FORMULA_SHA=$(sha256sum formula.tar.gz | cut -d' ' -f1)
+          CASK_SHA=$(sha256sum cask.tar.gz | cut -d' ' -f1)
+
+          git clone https://x-access-token:${TAP_TOKEN}@github.com/smnhffmnn/homebrew-tap.git tap
+          cd tap
+
+          # Update Formula
+          cat > Formula/vox.rb << FORMULA
+          class Vox < Formula
+            desc "Cross-platform speech-to-text dictation tool"
+            homepage "https://github.com/smnhffmnn/vox"
+            version "${VERSION}"
+            license "MIT"
+
+            depends_on :macos
+            depends_on arch: :arm64
+
+            url "${FORMULA_URL}"
+            sha256 "${FORMULA_SHA}"
+
+            def install
+              bin.install "vox"
+            end
+
+            test do
+              assert_match "vox", shell_output("#{bin}/vox --version", 0)
+            end
+          end
+          FORMULA
+
+          # Update Cask
+          mkdir -p Casks
+          cat > Casks/vox.rb << CASK
+          cask "vox" do
+            version "${VERSION}"
+            sha256 "${CASK_SHA}"
+
+            url "${CASK_URL}"
+            name "Vox"
+            desc "Cross-platform speech-to-text dictation tool"
+            homepage "https://github.com/smnhffmnn/vox"
+
+            depends_on arch: :arm64
+
+            app "vox.app"
+
+            zap trash: [
+              "~/.config/vox",
+            ]
+          end
+          CASK
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/vox.rb Casks/vox.rb
+          git commit -m "Update vox to ${VERSION}" || true
+          git push

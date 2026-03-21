@@ -17,8 +17,8 @@ type Snippet struct {
 //
 // Expected format:
 //
-//	- trigger: "kalenderlink"
-//	  text: "https://cal.com/simon/30min"
+//	- trigger: "greeting"
+//	  text: "Hello, thanks for reaching out!"
 func LoadSnippets() ([]Snippet, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

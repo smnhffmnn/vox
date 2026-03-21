@@ -1,16 +1,42 @@
-.PHONY: dev build clean
+VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+BUILDTIME := $(shell date -u '+%Y-%m-%d %H:%M UTC')
+LDFLAGS   := -ldflags "-s -w -X main.version=$(VERSION) -X 'main.buildTime=$(BUILDTIME)'"
+BINARY  := vox
+WAILS3  := $(shell which wails3 2>/dev/null || echo $(HOME)/go/bin/wails3)
 
-WAILS := $(shell which wails3 2>/dev/null || echo $(HOME)/go/bin/wails3)
+.PHONY: build bindings frontend dev run tidy test clean
 
-# Development with hot-reload
+# Generate Wails v3 bindings for frontend
+bindings:
+	$(WAILS3) generate bindings
+
+# Build frontend (Svelte via Vite)
+frontend: bindings
+	cd frontend && npm install && npm run build
+
+# Desktop build (bindings + frontend + Go binary + macOS .app bundle)
+build: frontend
+	go build $(LDFLAGS) -o build/bin/$(BINARY) .
+	@if [ -d build/bin/$(BINARY).app ]; then \
+		cp build/bin/$(BINARY) build/bin/$(BINARY).app/Contents/MacOS/$(BINARY); \
+		echo "Updated $(BINARY).app bundle"; \
+	fi
+
+# Development: run frontend dev server + Go binary separately
 dev:
-	$(WAILS) dev
+	@echo "Run in two terminals:"
+	@echo "  1) cd frontend && npm run dev"
+	@echo "  2) go run $(LDFLAGS) ."
 
-# Production build for current platform
-build:
-	$(WAILS) build
+run: build
+	./build/bin/$(BINARY)
+
+tidy:
+	go mod tidy
+
+test:
+	go test ./...
 
 clean:
-	rm -rf build/bin
-	rm -rf frontend/dist
-	rm -rf frontend/node_modules
+	rm -f $(BINARY) $(BINARY).exe
+	rm -rf build/bin/ frontend/bindings/

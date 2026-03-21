@@ -27,7 +27,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-const Version = "1.0.0"
+var version = "dev"
 
 // App is the main application struct exposed to the Wails frontend.
 type App struct {
@@ -227,7 +227,7 @@ func (a *App) GetStatus() StatusResponse {
 	return StatusResponse{
 		State:   a.getState(),
 		Uptime:  time.Since(a.started).Truncate(time.Second).String(),
-		Version: Version,
+		Version: version,
 		HasKey:  keychain.HasKey("vox", "openai-api-key"),
 	}
 }
@@ -410,7 +410,7 @@ func (a *App) HasAPIKey(key string) bool {
 
 // GetVersion returns the app version.
 func (a *App) GetVersion() string {
-	return Version
+	return version
 }
 
 // GetPermissions returns the current system permission status.
