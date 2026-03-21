@@ -1,9 +1,11 @@
 # Build output
+bin/
 build/bin/
 build/linux/
 vox
 *.exe
 .task/
+*.md5
 
 # Frontend
 frontend/dist/
