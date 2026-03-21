@@ -110,3 +110,7 @@ frontend/
 - **Audio:** malgo (miniaudio) — CoreAudio / WASAPI / PulseAudio
 - **STT:** OpenAI Whisper API or local Whisper-compatible server
 - **LLM:** OpenAI GPT-4o-mini / Ollama / none
+
+## License
+
+MIT — see [LICENSE](LICENSE)
