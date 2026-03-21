@@ -22,6 +22,11 @@ Cross-platform speech-to-text dictation tool. Press hotkey → speak → text ap
 | Linux (Fedora, Wayland/X11) | Supported |
 | Windows (amd64) | Supported |
 
+> **macOS Gatekeeper:** The app is not code-signed yet. If macOS shows "vox is damaged and can't be opened", run:
+> ```bash
+> xattr -cr /path/to/vox.app
+> ```
+
 ## Requirements
 
 - Go 1.24+
