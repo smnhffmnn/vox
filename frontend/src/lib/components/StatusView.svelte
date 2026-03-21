@@ -178,6 +178,12 @@
     50% { opacity: 0.6; transform: scale(0.95); }
   }
 
+  @media (prefers-reduced-motion: reduce) {
+    .state-circle.pulse {
+      animation: none;
+    }
+  }
+
   .state-label {
     font-size: 16px;
     font-weight: 600;

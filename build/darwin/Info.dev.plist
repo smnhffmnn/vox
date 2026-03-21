@@ -31,5 +31,9 @@
 		<string>true</string>
 		<key>NSHumanReadableCopyright</key>
 		<string>(c) 2025, Simon Hoffmann</string>
+		<key>NSMicrophoneUsageDescription</key>
+		<string>Vox needs microphone access to record your voice for speech-to-text transcription.</string>
+		<key>NSAccessibilityUsageDescription</key>
+		<string>Vox needs accessibility access for global hotkey detection and text injection.</string>
 	</dict>
 </plist>

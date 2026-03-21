@@ -54,6 +54,8 @@
     
     <key>CFBundleGetInfoString</key>
     <string>Cross-platform voice-to-text with context-aware cleanup</string>
-    
+
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Vox needs microphone access to record your voice for speech-to-text transcription.</string>
 </dict>
 </plist>

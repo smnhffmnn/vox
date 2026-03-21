@@ -1,6 +1,5 @@
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-BUILDTIME := $(shell date -u '+%Y-%m-%d %H:%M UTC')
-LDFLAGS   := -ldflags "-s -w -X main.version=$(VERSION) -X 'main.buildTime=$(BUILDTIME)'"
+LDFLAGS   := -ldflags "-s -w -X main.version=$(VERSION)"
 BINARY  := vox
 WAILS3  := $(shell which wails3 2>/dev/null || echo $(HOME)/go/bin/wails3)
 

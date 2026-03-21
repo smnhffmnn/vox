@@ -77,14 +77,7 @@ func parseSnippets(data string) ([]Snippet, error) {
 	return snippets, nil
 }
 
-func extractYAMLValue(s string) string {
-	s = strings.TrimSpace(s)
-	// Remove surrounding quotes
-	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
-		s = s[1 : len(s)-1]
-	}
-	return s
-}
+// extractYAMLValue is defined in config.go — reuse it here via package scope.
 
 // MatchSnippet checks if the cleaned text exactly matches a snippet trigger (case-insensitive).
 // Returns the snippet text and true if matched, otherwise empty string and false.

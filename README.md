@@ -49,7 +49,7 @@ Download the latest release from [GitHub Releases](https://github.com/smnhffmnn/
 
 **Requirements:**
 
-- Go 1.24+
+- Go 1.25+
 - Node.js 18+
 - [Wails v3 CLI](https://v3.wails.io): `go install github.com/wailsapp/wails/v3/cmd/wails3@latest`
 

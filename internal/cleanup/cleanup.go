@@ -286,7 +286,10 @@ func (c *Cleaner) CleanupWithCustomPrompts(text, language string, ctx *windowctx
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20)) // 10 MB limit
+	if err != nil {
+		return "", fmt.Errorf("read response: %w", err)
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("LLM API error (%d): %s", resp.StatusCode, string(body))

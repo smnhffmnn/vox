@@ -54,5 +54,7 @@ func keystroke(text string) error {
 func escapeAppleScript(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, "\t", `\t`)
+	s = strings.ReplaceAll(s, "\r", "")
 	return s
 }
