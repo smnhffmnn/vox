@@ -174,6 +174,14 @@ func parseConfig(data string, cfg *Config) {
 	}
 }
 
+func extractYAMLValue(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		s = s[1 : len(s)-1]
+	}
+	return s
+}
+
 func parseKV(line string) (string, string, bool) {
 	idx := strings.Index(line, ":")
 	if idx < 0 {
