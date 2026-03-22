@@ -539,11 +539,11 @@ func (a *App) getShowOverlay() bool {
 }
 
 func (a *App) positionOverlayCenter() {
-	if a.overlayWindow == nil || a.window == nil {
+	if a.overlayWindow == nil || a.wailsApp == nil {
 		return
 	}
-	screen, err := a.window.GetScreen()
-	if err != nil || screen == nil {
+	screen := a.wailsApp.Screen.GetPrimary()
+	if screen == nil {
 		return
 	}
 	overlayWidth := 280
@@ -567,9 +567,19 @@ func (a *App) startRec() {
 	a.recording = rec
 	a.isRecording = true
 	a.setState("recording")
+
+	// Enable Escape key to cancel recording
+	hotkey.StartEscapeMonitor(func() {
+		a.recordingMu.Lock()
+		defer a.recordingMu.Unlock()
+		if a.isRecording {
+			a.stopAndDiscard()
+		}
+	})
 }
 
 func (a *App) stopAndProcess() {
+	hotkey.StopEscapeMonitor()
 	if a.getAudioFeedback() {
 		feedback.PlayStop()
 	}
@@ -582,6 +592,7 @@ func (a *App) stopAndProcess() {
 }
 
 func (a *App) stopAndDiscard() {
+	hotkey.StopEscapeMonitor()
 	if a.recording != nil {
 		r := a.recording
 		a.recording = nil

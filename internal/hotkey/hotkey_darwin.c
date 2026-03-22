@@ -4,12 +4,14 @@
 // Defined in Go via //export
 extern void goHotkeyDown(void);
 extern void goHotkeyUp(void);
+extern void goEscapePressed(void);
 
 static int targetKeyCode = 61; // Right Option default
 
 static id keyDownMonitor = nil;
 static id keyUpMonitor = nil;
 static id flagsMonitor = nil;
+static id escapeMonitor = nil;
 static BOOL targetKeyPressed = NO;
 
 void voxSetTargetKeyCode(int code) {
@@ -71,6 +73,23 @@ void voxStartMonitor(void) {
                     goHotkeyUp();
                 }
             }];
+    }
+}
+
+void voxStartEscapeMonitor(void) {
+    if (escapeMonitor != nil) return;
+    escapeMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskKeyDown
+        handler:^(NSEvent *event) {
+            if ([event keyCode] == 53) { // Escape
+                goEscapePressed();
+            }
+        }];
+}
+
+void voxStopEscapeMonitor(void) {
+    if (escapeMonitor != nil) {
+        [NSEvent removeMonitor:escapeMonitor];
+        escapeMonitor = nil;
     }
 }
 

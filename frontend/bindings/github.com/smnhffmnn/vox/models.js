@@ -78,6 +78,13 @@ export class ConfigResponse {
              */
             this["audio_feedback"] = false;
         }
+        if (!("show_overlay" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["show_overlay"] = false;
+        }
         if (!("stt_backend" in $$source)) {
             /**
              * @member

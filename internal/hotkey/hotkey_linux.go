@@ -224,5 +224,11 @@ func linuxKeyCode(k Key) uint16 {
 	}
 }
 
+// StartEscapeMonitor is a no-op on Linux (TODO: implement via evdev).
+func StartEscapeMonitor(onEscape func()) {}
+
+// StopEscapeMonitor is a no-op on Linux.
+func StopEscapeMonitor() {}
+
 // Ensure unsafe is used (needed for sizeof check)
 var _ = unsafe.Sizeof(inputEvent{})

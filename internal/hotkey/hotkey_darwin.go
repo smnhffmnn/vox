@@ -10,6 +10,8 @@ package hotkey
 void voxSetTargetKeyCode(int code);
 void voxStartMonitor(void);
 void voxStopMonitor(void);
+void voxStartEscapeMonitor(void);
+void voxStopEscapeMonitor(void);
 */
 import "C"
 
@@ -21,6 +23,9 @@ var (
 	mu         sync.Mutex
 	onPressF   func()
 	onReleaseF func()
+
+	escapeMu  sync.Mutex
+	onEscapeF func()
 )
 
 //export goHotkeyDown
@@ -41,6 +46,32 @@ func goHotkeyUp() {
 	if f != nil {
 		go f()
 	}
+}
+
+//export goEscapePressed
+func goEscapePressed() {
+	escapeMu.Lock()
+	f := onEscapeF
+	escapeMu.Unlock()
+	if f != nil {
+		go f()
+	}
+}
+
+// StartEscapeMonitor registers a global Escape key listener.
+func StartEscapeMonitor(onEscape func()) {
+	escapeMu.Lock()
+	onEscapeF = onEscape
+	escapeMu.Unlock()
+	C.voxStartEscapeMonitor()
+}
+
+// StopEscapeMonitor removes the global Escape key listener.
+func StopEscapeMonitor() {
+	C.voxStopEscapeMonitor()
+	escapeMu.Lock()
+	onEscapeF = nil
+	escapeMu.Unlock()
 }
 
 type darwinListener struct {
