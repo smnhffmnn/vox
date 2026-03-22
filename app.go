@@ -137,8 +137,8 @@ func (a *App) setState(state string) {
 	// Show/hide overlay
 	if a.overlayWindow != nil {
 		if a.getShowOverlay() && (state == "recording" || state == "processing") {
-			a.positionOverlayCenter()
 			a.overlayWindow.Show()
+			a.positionOverlayCenter()
 		} else {
 			a.overlayWindow.Hide()
 		}

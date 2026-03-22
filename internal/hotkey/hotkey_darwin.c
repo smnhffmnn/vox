@@ -77,20 +77,24 @@ void voxStartMonitor(void) {
 }
 
 void voxStartEscapeMonitor(void) {
-    if (escapeMonitor != nil) return;
-    escapeMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskKeyDown
-        handler:^(NSEvent *event) {
-            if ([event keyCode] == 53) { // Escape
-                goEscapePressed();
-            }
-        }];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (escapeMonitor != nil) return;
+        escapeMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskKeyDown
+            handler:^(NSEvent *event) {
+                if ([event keyCode] == 53) { // Escape
+                    goEscapePressed();
+                }
+            }];
+    });
 }
 
 void voxStopEscapeMonitor(void) {
-    if (escapeMonitor != nil) {
-        [NSEvent removeMonitor:escapeMonitor];
-        escapeMonitor = nil;
-    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (escapeMonitor != nil) {
+            [NSEvent removeMonitor:escapeMonitor];
+            escapeMonitor = nil;
+        }
+    });
 }
 
 void voxStopMonitor(void) {
