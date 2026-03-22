@@ -539,17 +539,14 @@ func (a *App) getShowOverlay() bool {
 }
 
 func (a *App) positionOverlayCenter() {
-	if a.overlayWindow == nil || a.wailsApp == nil {
+	if a.overlayWindow == nil {
 		return
 	}
-	screen := a.wailsApp.Screen.GetPrimary()
-	if screen == nil {
-		return
-	}
-	overlayWidth := 280
-	x := screen.WorkArea.X + (screen.WorkArea.Width-overlayWidth)/2
-	y := screen.WorkArea.Y + 8
-	a.overlayWindow.SetPosition(x, y)
+	s := hotkey.GetMainScreenInfo()
+	overlayWidth := 240
+	x := (s.Width - overlayWidth) / 2
+	y := s.MenuBarHeight + 8 // just below menu bar / notch
+	a.overlayWindow.SetRelativePosition(x, y)
 }
 
 // --- Recording Pipeline ---
@@ -623,6 +620,17 @@ func (a *App) startHandsfree() {
 		feedback.PlayHandsfreeStart()
 	}
 	a.setState("recording")
+
+	// Enable Escape key to cancel hands-free recording
+	hotkey.StartEscapeMonitor(func() {
+		a.recordingMu.Lock()
+		defer a.recordingMu.Unlock()
+		if a.handsfreeActive {
+			a.stopHandsfree()
+		} else if a.isRecording {
+			a.stopAndDiscard()
+		}
+	})
 	a.handsfreeDone = make(chan struct{})
 	hfTimeout := a.getHandsfreeTimeout()
 	if hfTimeout > 0 {
@@ -649,6 +657,7 @@ func (a *App) startHandsfree() {
 }
 
 func (a *App) stopHandsfree() {
+	hotkey.StopEscapeMonitor()
 	a.handsfreeActive = false
 	a.toggleState = false
 	a.doubletapPending = false

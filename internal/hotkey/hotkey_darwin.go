@@ -12,6 +12,7 @@ void voxStartMonitor(void);
 void voxStopMonitor(void);
 void voxStartEscapeMonitor(void);
 void voxStopEscapeMonitor(void);
+void voxGetMainScreenInfo(int *x, int *y, int *width, int *height, int *menuBarHeight);
 */
 import "C"
 
@@ -72,6 +73,18 @@ func StopEscapeMonitor() {
 	escapeMu.Lock()
 	onEscapeF = nil
 	escapeMu.Unlock()
+}
+
+// ScreenInfo holds the visible area and menu bar height of the main screen.
+type ScreenInfo struct {
+	X, Y, Width, Height int
+	MenuBarHeight       int // includes notch on MacBook Pro
+}
+
+func GetMainScreenInfo() ScreenInfo {
+	var x, y, w, h, mb C.int
+	C.voxGetMainScreenInfo(&x, &y, &w, &h, &mb)
+	return ScreenInfo{X: int(x), Y: int(y), Width: int(w), Height: int(h), MenuBarHeight: int(mb)}
 }
 
 type darwinListener struct {

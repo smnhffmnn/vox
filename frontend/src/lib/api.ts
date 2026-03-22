@@ -80,9 +80,15 @@ export {
   OpenMicrophoneSettings,
 } from "../../bindings/github.com/smnhffmnn/vox/app"
 
+// State change event payload (emitted by Go backend)
+export interface StateChangedEvent {
+  state: string
+  started_at?: number
+}
+
 // Events helper using Wails v3 runtime
-export function EventsOn(event: string, callback: (...args: any[]) => void): () => void {
-  const cancel = Events.On(event, (ev: any) => {
+export function EventsOn<T = unknown>(event: string, callback: (data: T) => void): () => void {
+  const cancel = Events.On(event, (ev: { data: T }) => {
     callback(ev.data)
   })
   return () => cancel()

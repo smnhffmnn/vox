@@ -230,5 +230,16 @@ func StartEscapeMonitor(onEscape func()) {}
 // StopEscapeMonitor is a no-op on Linux.
 func StopEscapeMonitor() {}
 
+// ScreenInfo holds the visible area and menu bar height of the main screen.
+type ScreenInfo struct {
+	X, Y, Width, Height int
+	MenuBarHeight       int
+}
+
+// GetMainScreenInfo returns a default screen size on Linux.
+func GetMainScreenInfo() ScreenInfo {
+	return ScreenInfo{X: 0, Y: 0, Width: 1920, Height: 1080, MenuBarHeight: 0}
+}
+
 // Ensure unsafe is used (needed for sizeof check)
 var _ = unsafe.Sizeof(inputEvent{})

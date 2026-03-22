@@ -47,13 +47,13 @@ func main() {
 		},
 	})
 
-	// Floating overlay (always-on-top, frameless, transparent)
+	// Floating overlay (always-on-top, frameless, transparent, visible on all Spaces)
 	overlayWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:              "overlay",
 		Title:             "",
 		URL:               "/overlay.html",
-		Width:             280,
-		Height:            44,
+		Width:             240,
+		Height:            36,
 		AlwaysOnTop:       true,
 		Frameless:         true,
 		DisableResize:     true,
@@ -62,7 +62,13 @@ func main() {
 		BackgroundType:    application.BackgroundTypeTransparent,
 		BackgroundColour:  application.RGBA{Red: 0, Green: 0, Blue: 0, Alpha: 0},
 		Mac: application.MacWindow{
-			Backdrop: application.MacBackdropTransparent,
+			Backdrop:      application.MacBackdropTransparent,
+			DisableShadow: true,
+			WindowLevel:   application.MacWindowLevelScreenSaver,
+			CollectionBehavior: application.MacWindowCollectionBehaviorCanJoinAllSpaces |
+				application.MacWindowCollectionBehaviorStationary |
+				application.MacWindowCollectionBehaviorIgnoresCycle |
+				application.MacWindowCollectionBehaviorFullScreenAuxiliary,
 		},
 	})
 

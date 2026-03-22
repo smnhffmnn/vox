@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
-  import { Events } from '@wailsio/runtime'
+  import { EventsOn, type StateChangedEvent } from './lib/api'
 
   let state = $state<string>('idle')
   let startedAt = $state<number>(0)
@@ -18,12 +18,11 @@
   }
 
   onMount(() => {
-    cancel = Events.On('state-changed', (ev: any) => {
-      const data = ev.data
+    cancel = EventsOn<string | StateChangedEvent>('state-changed', (data) => {
       state = typeof data === 'string' ? data : (data.state ?? 'idle')
 
       if (state === 'recording') {
-        if (data.started_at) startedAt = data.started_at
+        if (typeof data !== 'string' && data.started_at) startedAt = data.started_at
         else startedAt = Date.now()
         elapsed = '0:00'
         if (timerInterval) clearInterval(timerInterval)
@@ -47,7 +46,8 @@
   })
 </script>
 
-<div class="overlay" class:visible>
+<div class="overlay" class:visible role="status" aria-live="polite"
+  aria-label={state === 'recording' ? `Recording ${elapsed}` : state === 'processing' ? 'Processing transcription' : ''}>
   {#if state === 'recording'}
     <div class="pill recording">
       <span class="dot"></span>
@@ -64,9 +64,11 @@
 </div>
 
 <style>
-  :global(html), :global(body) {
+  :global(html), :global(body), :global(#overlay) {
     margin: 0;
     padding: 0;
+    height: 100%;
+    width: 100%;
     background: transparent !important;
     overflow: hidden;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
@@ -80,32 +82,34 @@
     width: 100%;
     height: 100%;
     opacity: 0;
-    transform: translateY(-6px) scale(0.96);
-    transition: opacity 0.2s ease, transform 0.2s ease;
+    transition: opacity 0.2s ease;
     pointer-events: none;
   }
 
   .overlay.visible {
     opacity: 1;
-    transform: translateY(0) scale(1);
   }
 
   .pill {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 8px;
-    padding: 8px 16px;
-    border-radius: 20px;
+    padding: 0 14px;
+    width: 100%;
+    height: 100%;
+    border-radius: 10px;
     font-size: 13px;
     font-weight: 500;
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
     white-space: nowrap;
     user-select: none;
+    box-sizing: border-box;
   }
 
   .pill.recording {
-    background: rgba(220, 50, 50, 0.88);
+    background: rgba(205, 55, 55, 0.9);
     color: #fff;
     box-shadow: 0 2px 16px rgba(220, 50, 50, 0.4), 0 0 0 0.5px rgba(255, 255, 255, 0.15) inset;
   }
@@ -175,8 +179,13 @@
   }
 
   @media (prefers-color-scheme: light) {
+    .pill.recording {
+      background: rgba(200, 50, 50, 0.92);
+      color: #fff;
+      box-shadow: 0 2px 16px rgba(200, 50, 50, 0.3), 0 0 0 0.5px rgba(255, 255, 255, 0.2) inset;
+    }
     .pill.processing {
-      background: rgba(255, 255, 255, 0.88);
+      background: rgba(255, 255, 255, 0.9);
       color: rgba(30, 30, 30, 0.9);
       box-shadow: 0 2px 16px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.08) inset;
     }

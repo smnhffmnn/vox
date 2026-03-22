@@ -48,7 +48,7 @@
   }
 
   onMount(() => {
-    cleanupStateEvent = EventsOn('state-changed', (data: any) => {
+    cleanupStateEvent = EventsOn<string | { state: string }>('state-changed', (data) => {
       $appState = typeof data === 'string' ? data : data.state
     })
   })
@@ -150,7 +150,12 @@
   }
 
   .state-dot.pulse {
-    animation: -global-pulse 1.5s ease-in-out infinite;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
   }
 
   .version {
