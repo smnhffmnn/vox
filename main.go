@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 //go:embed all:frontend/dist
@@ -45,6 +46,13 @@ func main() {
 			Backdrop:                application.MacBackdropTranslucent,
 			InvisibleTitleBarHeight: 50,
 		},
+	})
+
+	// Hide window on close (red button) instead of destroying it.
+	// Wails' built-in ApplicationShouldHandleReopen handler shows it again on dock click.
+	window.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		e.Cancel()
+		window.Hide()
 	})
 
 	// Floating overlay (always-on-top, frameless, transparent, visible on all Spaces)
