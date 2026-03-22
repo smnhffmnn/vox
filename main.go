@@ -47,6 +47,25 @@ func main() {
 		},
 	})
 
+	// Floating overlay (always-on-top, frameless, transparent)
+	overlayWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:              "overlay",
+		Title:             "",
+		URL:               "/overlay.html",
+		Width:             280,
+		Height:            44,
+		AlwaysOnTop:       true,
+		Frameless:         true,
+		DisableResize:     true,
+		Hidden:            true,
+		IgnoreMouseEvents: true,
+		BackgroundType:    application.BackgroundTypeTransparent,
+		BackgroundColour:  application.RGBA{Red: 0, Green: 0, Blue: 0, Alpha: 0},
+		Mac: application.MacWindow{
+			Backdrop: application.MacBackdropTransparent,
+		},
+	})
+
 	// System tray with native support on all platforms
 	trayMenu := wailsApp.NewMenu()
 	statusItem := trayMenu.Add("Idle")
@@ -68,6 +87,7 @@ func main() {
 	// Store references for app
 	app.wailsApp = wailsApp
 	app.window = window
+	app.overlayWindow = overlayWindow
 	app.systemTray = systemTray
 	app.trayStatusItem = statusItem
 

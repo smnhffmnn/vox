@@ -48,8 +48,8 @@
   }
 
   onMount(() => {
-    cleanupStateEvent = EventsOn('state-changed', (state: string) => {
-      $appState = state
+    cleanupStateEvent = EventsOn('state-changed', (data: any) => {
+      $appState = typeof data === 'string' ? data : data.state
     })
   })
 

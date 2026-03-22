@@ -21,6 +21,7 @@ type Config struct {
 	DoubletapWindow  int    // Double-tap detection window in milliseconds
 	Notifications    bool
 	AudioFeedback    bool
+	ShowOverlay      bool
 
 	// Backend
 	STTBackend string // "openai" (default) or "local"
@@ -51,6 +52,7 @@ func DefaultConfig() *Config {
 		DoubletapWindow:  400,
 		Notifications:    true,
 		AudioFeedback: true,
+		ShowOverlay:   true,
 		STTBackend:    "openai",
 		LLMBackend:    "openai",
 	}
@@ -109,6 +111,7 @@ func (cfg *Config) Save() error {
 	b.WriteString(fmt.Sprintf("doubletap_window: %d\n", cfg.DoubletapWindow))
 	b.WriteString(fmt.Sprintf("notifications: %v\n", cfg.Notifications))
 	b.WriteString(fmt.Sprintf("audio_feedback: %v\n", cfg.AudioFeedback))
+	b.WriteString(fmt.Sprintf("show_overlay: %v\n", cfg.ShowOverlay))
 	b.WriteString("\n# Backend\n")
 	b.WriteString(fmt.Sprintf("stt_backend: %s\n", cfg.STTBackend))
 	if cfg.STTURL != "" {
@@ -160,6 +163,8 @@ func parseConfig(data string, cfg *Config) {
 			cfg.Notifications = value == "true"
 		case "audio_feedback":
 			cfg.AudioFeedback = value == "true"
+		case "show_overlay":
+			cfg.ShowOverlay = value == "true"
 		case "stt_backend":
 			cfg.STTBackend = value
 		case "stt_url":

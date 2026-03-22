@@ -169,6 +169,20 @@
         <span class="hint">Play sounds when recording starts/stops</span>
       </div>
 
+      <div class="form-row">
+        <div class="form-toggle">
+          <label for="toggle-overlay">Status Overlay</label>
+          <button
+            id="toggle-overlay"
+            class="toggle"
+            class:active={cfg.show_overlay}
+            onclick={() => (cfg!.show_overlay = !cfg!.show_overlay)}
+            aria-label="Toggle status overlay"
+          ></button>
+        </div>
+        <span class="hint">Show floating indicator when recording or processing</span>
+      </div>
+
       <div class="form-actions">
         <button class="primary" onclick={save} disabled={saving}>
           {saving ? 'Saving...' : 'Save Settings'}

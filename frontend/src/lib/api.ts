@@ -15,6 +15,7 @@ export interface ConfigResponse {
   doubletap_window: number
   notifications: boolean
   audio_feedback: boolean
+  show_overlay: boolean
   stt_backend: string
   stt_url: string
   llm_backend: string

@@ -37,6 +37,7 @@ type App struct {
 	// Wails v3 references (set by main.go before Run)
 	wailsApp       *application.App
 	window         *application.WebviewWindow
+	overlayWindow  *application.WebviewWindow
 	systemTray     *application.SystemTray
 	trayStatusItem *application.MenuItem
 
@@ -133,9 +134,23 @@ func (a *App) setState(state string) {
 		}
 	}
 
-	// Notify frontend
+	// Show/hide overlay
+	if a.overlayWindow != nil {
+		if a.getShowOverlay() && (state == "recording" || state == "processing") {
+			a.positionOverlayCenter()
+			a.overlayWindow.Show()
+		} else {
+			a.overlayWindow.Hide()
+		}
+	}
+
+	// Notify frontend (all windows receive this)
 	if a.wailsApp != nil {
-		a.wailsApp.Event.Emit("state-changed", state)
+		payload := map[string]any{"state": state}
+		if state == "recording" {
+			payload["started_at"] = time.Now().UnixMilli()
+		}
+		a.wailsApp.Event.Emit("state-changed", payload)
 	}
 }
 
@@ -158,6 +173,7 @@ type ConfigResponse struct {
 	DoubletapWindow  int    `json:"doubletap_window"`
 	Notifications    bool   `json:"notifications"`
 	AudioFeedback    bool   `json:"audio_feedback"`
+	ShowOverlay      bool   `json:"show_overlay"`
 	STTBackend       string `json:"stt_backend"`
 	STTURL           string `json:"stt_url"`
 	LLMBackend       string `json:"llm_backend"`
@@ -179,6 +195,7 @@ func (a *App) GetConfig() ConfigResponse {
 		DoubletapWindow:  a.cfg.DoubletapWindow,
 		Notifications:    a.cfg.Notifications,
 		AudioFeedback:    a.cfg.AudioFeedback,
+		ShowOverlay:      a.cfg.ShowOverlay,
 		STTBackend:       a.cfg.STTBackend,
 		STTURL:           a.cfg.STTURL,
 		LLMBackend:       a.cfg.LLMBackend,
@@ -200,6 +217,7 @@ func (a *App) SaveConfig(update ConfigResponse) error {
 	a.cfg.DoubletapWindow = update.DoubletapWindow
 	a.cfg.Notifications = update.Notifications
 	a.cfg.AudioFeedback = update.AudioFeedback
+	a.cfg.ShowOverlay = update.ShowOverlay
 	a.cfg.STTBackend = update.STTBackend
 	a.cfg.STTURL = update.STTURL
 	a.cfg.LLMBackend = update.LLMBackend
@@ -210,6 +228,9 @@ func (a *App) SaveConfig(update ConfigResponse) error {
 
 	if update.Hotkey != oldHotkey {
 		a.restartHotkeyListener()
+	}
+	if !update.ShowOverlay && a.overlayWindow != nil {
+		a.overlayWindow.Hide()
 	}
 	return err
 }
@@ -509,6 +530,26 @@ func (a *App) getAudioFeedback() bool {
 	a.cfg.RLock()
 	defer a.cfg.RUnlock()
 	return a.cfg.AudioFeedback
+}
+
+func (a *App) getShowOverlay() bool {
+	a.cfg.RLock()
+	defer a.cfg.RUnlock()
+	return a.cfg.ShowOverlay
+}
+
+func (a *App) positionOverlayCenter() {
+	if a.overlayWindow == nil || a.window == nil {
+		return
+	}
+	screen, err := a.window.GetScreen()
+	if err != nil || screen == nil {
+		return
+	}
+	overlayWidth := 280
+	x := screen.WorkArea.X + (screen.WorkArea.Width-overlayWidth)/2
+	y := screen.WorkArea.Y + 8
+	a.overlayWindow.SetPosition(x, y)
 }
 
 // --- Recording Pipeline ---
