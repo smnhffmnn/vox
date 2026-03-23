@@ -14,9 +14,27 @@ import (
 var assets embed.FS
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "--version" {
-		fmt.Println("vox " + version)
-		os.Exit(0)
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--version", "-version":
+			fmt.Println("vox " + version)
+			os.Exit(0)
+		case "--help", "-help", "-h":
+			fmt.Fprintf(os.Stderr, `vox — Speech-to-Text Dictation
+
+Cross-platform dictation tool with global hotkey, real-time
+transcription, and intelligent text cleanup. Runs in the system tray.
+
+Usage:
+  vox              Start the app
+  vox --version    Print version
+  vox --help       Show this help
+
+Config: ~/.config/vox/config.yaml
+More info: https://github.com/smnhffmnn/vox
+`)
+			os.Exit(0)
+		}
 	}
 
 	app := NewApp()
