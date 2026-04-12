@@ -356,7 +356,10 @@ func (a *App) TestSTT() TestResult {
 	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
-	req, _ := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return TestResult{OK: false, Error: err.Error()}
+	}
 	if backend != "local" {
 		if key := a.resolveAPIKey(); key != "" {
 			req.Header.Set("Authorization", "Bearer "+key)
@@ -391,7 +394,10 @@ func (a *App) TestLLM() TestResult {
 
 	url := baseURL + "/models"
 	client := &http.Client{Timeout: 5 * time.Second}
-	req, _ := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return TestResult{OK: false, Error: err.Error()}
+	}
 	if llmBackend != "ollama" {
 		if key := a.resolveAPIKey(); key != "" {
 			req.Header.Set("Authorization", "Bearer "+key)
@@ -612,9 +618,10 @@ func (a *App) startHandsfree() {
 	hfTimeout := a.getHandsfreeTimeout()
 	if hfTimeout > 0 {
 		a.handsfreeTimer = time.AfterFunc(hfTimeout, func() {
+			var shouldNotify bool
 			a.recordingMu.Lock()
-			defer a.recordingMu.Unlock()
 			if !a.handsfreeActive {
+				a.recordingMu.Unlock()
 				return
 			}
 			a.handsfreeActive = false
@@ -625,7 +632,9 @@ func (a *App) startHandsfree() {
 			if a.isRecording && a.recording != nil {
 				a.stopAndProcess()
 			}
-			if a.getNotifications() {
+			shouldNotify = a.getNotifications()
+			a.recordingMu.Unlock()
+			if shouldNotify {
 				notify.Send("vox", fmt.Sprintf("Hands-Free stopped after %d:%02d",
 					int(hfTimeout.Minutes()), int(hfTimeout.Seconds())%60))
 			}
@@ -849,7 +858,9 @@ func (a *App) transcribeAndCleanup(audioFile string, ctx *windowctx.Context) (tr
 	a.cfg.RUnlock()
 
 	apiKey := a.resolveAPIKey()
-	if apiKey == "" && (sttBackend == "" || sttBackend == "openai" || llmBackend == "" || llmBackend == "openai") {
+	sttNeedsKey := sttBackend == "" || sttBackend == "openai"
+	llmNeedsKey := llmBackend == "" || llmBackend == "openai"
+	if apiKey == "" && (sttNeedsKey || llmNeedsKey) {
 		return transcriptionResult{}, fmt.Errorf("no API key set — configure in Settings")
 	}
 
