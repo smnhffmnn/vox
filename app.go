@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -250,6 +251,9 @@ func (a *App) GetDictionary() []string {
 	if words == nil {
 		return []string{}
 	}
+	sort.Slice(words, func(i, j int) bool {
+		return strings.ToLower(words[i]) < strings.ToLower(words[j])
+	})
 	return words
 }
 
@@ -262,6 +266,9 @@ func (a *App) SaveDictionary(words []string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
+	sort.Slice(words, func(i, j int) bool {
+		return strings.ToLower(words[i]) < strings.ToLower(words[j])
+	})
 	content := strings.Join(words, "\n") + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "dictionary.txt"), []byte(content), 0o644); err != nil {
 		return err
@@ -559,6 +566,7 @@ func (a *App) startRec() {
 	})
 }
 
+// stopAndProcess must be called with recordingMu held.
 func (a *App) stopAndProcess() {
 	hotkey.StopEscapeMonitor()
 	if a.getAudioFeedback() {
@@ -572,6 +580,7 @@ func (a *App) stopAndProcess() {
 	go a.handleStopAndProcess(rec, gen)
 }
 
+// stopAndDiscard must be called with recordingMu held.
 func (a *App) stopAndDiscard() {
 	hotkey.StopEscapeMonitor()
 	if a.recording != nil {
@@ -678,6 +687,7 @@ func (a *App) onPress() {
 				a.doubletapPending = false
 				if a.doubletapTimer != nil {
 					a.doubletapTimer.Stop()
+					a.doubletapTimer = nil
 				}
 				a.stopHandsfree()
 			}
@@ -750,7 +760,7 @@ func (a *App) onRelease() {
 				if a.recording != nil {
 					a.stopAndProcess()
 				}
-			} else {
+			} else if !a.isRecording {
 				a.toggleState = true
 				a.startRec()
 			}
