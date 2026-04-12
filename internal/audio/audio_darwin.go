@@ -38,11 +38,14 @@ const char* getDefaultInputDeviceName(void) {
 }
 */
 import "C"
-import "fmt"
+import (
+	"fmt"
+	"os"
+)
 
 func init() {
 	name := C.GoString(C.getDefaultInputDeviceName())
 	if name != "" {
-		fmt.Printf("vox: default input device: %s\n", name)
+		fmt.Fprintf(os.Stderr, "vox: default input device: %s\n", name)
 	}
 }

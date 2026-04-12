@@ -66,7 +66,7 @@ func (o *OpenAI) Transcribe(audioFile, language, prompt string) (string, error) 
 	req.Header.Set("Authorization", "Bearer "+o.apiKey)
 	req.Header.Set("Content-Type", w.FormDataContentType())
 
-	client := &http.Client{Timeout: 120 * time.Second}
+	client := &http.Client{Timeout: 10 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("OpenAI API request: %w", err)

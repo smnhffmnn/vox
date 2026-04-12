@@ -1,3 +1,5 @@
+//go:build !nogui
+
 package main
 
 import (
@@ -8,10 +10,13 @@ import (
 )
 
 var (
-	iconIdle       = generateIcon(color.RGBA{140, 140, 140, 255}) // gray
-	iconRecording  = generateIcon(color.RGBA{220, 50, 50, 255})   // red
-	iconProcessing = generateIcon(color.RGBA{230, 160, 30, 255})  // orange
+	trayIconIdle       = generateIcon(color.RGBA{140, 140, 140, 255}) // gray
+	trayIconRecording  = generateIcon(color.RGBA{220, 50, 50, 255})   // red
+	trayIconProcessing = generateIcon(color.RGBA{230, 160, 30, 255})  // orange
 )
+
+// Keep old names for desktop.go tray init
+var iconIdle = trayIconIdle
 
 func generateIcon(fill color.RGBA) []byte {
 	const size = 44

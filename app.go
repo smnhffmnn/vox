@@ -10,8 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"context"
-
 	"github.com/smnhffmnn/vox/internal/audio"
 	"github.com/smnhffmnn/vox/internal/cleanup"
 	"github.com/smnhffmnn/vox/internal/config"
@@ -20,26 +18,30 @@ import (
 	"github.com/smnhffmnn/vox/internal/hotkey"
 	"github.com/smnhffmnn/vox/internal/inject"
 	"github.com/smnhffmnn/vox/internal/keychain"
-	"github.com/smnhffmnn/vox/internal/permissions"
 	"github.com/smnhffmnn/vox/internal/notify"
+	"github.com/smnhffmnn/vox/internal/permissions"
 	"github.com/smnhffmnn/vox/internal/stt"
 	"github.com/smnhffmnn/vox/internal/windowctx"
-	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 var version = "dev"
 
-// App is the main application struct exposed to the Wails frontend.
+// UIBridge abstracts desktop UI operations so the core logic
+// compiles without Wails in headless builds.
+type UIBridge interface {
+	SetTrayIcon(icon []byte)
+	SetTrayLabel(label string)
+	ShowOverlay(x, y int)
+	HideOverlay()
+	EmitEvent(name string, data any)
+	ShowWindow()
+}
+
+// App is the main application struct.
 type App struct {
 	cfg  *config.Config
 	hist *history.History
-
-	// Wails v3 references (set by main.go before Run)
-	wailsApp       *application.App
-	window         *application.WebviewWindow
-	overlayWindow  *application.WebviewWindow
-	systemTray     *application.SystemTray
-	trayStatusItem *application.MenuItem
+	ui   UIBridge
 
 	// State
 	state        string
@@ -88,22 +90,19 @@ func NewApp() *App {
 	}
 }
 
-// --- Wails v3 Service Lifecycle ---
-
-// ServiceStartup is called by Wails v3 when the service starts.
-func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
+// Start initializes the app (hotkey listener, dynamic data).
+// Called by the desktop lifecycle (ServiceStartup) or headless entry.
+func (a *App) Start() {
 	a.reloadDynamicData()
 	a.startHotkeyListener()
 	fmt.Fprintln(os.Stderr, "vox: service started")
-	return nil
 }
 
-// ServiceShutdown is called by Wails v3 when the service stops.
-func (a *App) ServiceShutdown() error {
+// Shutdown cleans up resources.
+func (a *App) Shutdown() {
 	if a.listener != nil {
 		a.listener.Close()
 	}
-	return nil
 }
 
 // --- State Management ---
@@ -113,45 +112,37 @@ func (a *App) setState(state string) {
 	a.state = state
 	a.stateMu.Unlock()
 
-	// Update system tray icon + menu
-	if a.systemTray != nil {
-		switch state {
-		case "recording":
-			a.systemTray.SetIcon(iconRecording)
-			if a.trayStatusItem != nil {
-				a.trayStatusItem.SetLabel("Recording...")
-			}
-		case "processing":
-			a.systemTray.SetIcon(iconProcessing)
-			if a.trayStatusItem != nil {
-				a.trayStatusItem.SetLabel("Processing...")
-			}
-		default:
-			a.systemTray.SetIcon(iconIdle)
-			if a.trayStatusItem != nil {
-				a.trayStatusItem.SetLabel("Idle")
-			}
-		}
+	if a.ui == nil {
+		return
 	}
 
-	// Show/hide overlay
-	if a.overlayWindow != nil {
-		if a.getShowOverlay() && (state == "recording" || state == "processing") {
-			a.overlayWindow.Show()
-			a.positionOverlayCenter()
-		} else {
-			a.overlayWindow.Hide()
-		}
+	switch state {
+	case "recording":
+		a.ui.SetTrayIcon(trayIconRecording)
+		a.ui.SetTrayLabel("Recording...")
+	case "processing":
+		a.ui.SetTrayIcon(trayIconProcessing)
+		a.ui.SetTrayLabel("Processing...")
+	default:
+		a.ui.SetTrayIcon(trayIconIdle)
+		a.ui.SetTrayLabel("Idle")
 	}
 
-	// Notify frontend (all windows receive this)
-	if a.wailsApp != nil {
-		payload := map[string]any{"state": state}
-		if state == "recording" {
-			payload["started_at"] = time.Now().UnixMilli()
-		}
-		a.wailsApp.Event.Emit("state-changed", payload)
+	if a.getShowOverlay() && (state == "recording" || state == "processing") {
+		s := hotkey.GetMainScreenInfo()
+		overlayWidth := 240
+		x := (s.Width - overlayWidth) / 2
+		y := s.MenuBarHeight + 8
+		a.ui.ShowOverlay(x, y)
+	} else {
+		a.ui.HideOverlay()
 	}
+
+	payload := map[string]any{"state": state}
+	if state == "recording" {
+		payload["started_at"] = time.Now().UnixMilli()
+	}
+	a.ui.EmitEvent("state-changed", payload)
 }
 
 func (a *App) getState() string {
@@ -160,7 +151,7 @@ func (a *App) getState() string {
 	return a.state
 }
 
-// --- Wails Bindings (exposed to frontend) ---
+// --- Frontend Bindings ---
 
 // ConfigResponse holds the config for the frontend.
 type ConfigResponse struct {
@@ -229,8 +220,8 @@ func (a *App) SaveConfig(update ConfigResponse) error {
 	if update.Hotkey != oldHotkey {
 		a.restartHotkeyListener()
 	}
-	if !update.ShowOverlay && a.overlayWindow != nil {
-		a.overlayWindow.Hide()
+	if !update.ShowOverlay && a.ui != nil {
+		a.ui.HideOverlay()
 	}
 	return err
 }
@@ -451,9 +442,8 @@ func (a *App) OpenMicrophoneSettings() {
 
 // ShowWindow brings the settings window to front.
 func (a *App) ShowWindow() {
-	if a.window != nil {
-		a.window.Show()
-		a.window.Focus()
+	if a.ui != nil {
+		a.ui.ShowWindow()
 	}
 }
 
@@ -538,17 +528,6 @@ func (a *App) getShowOverlay() bool {
 	return a.cfg.ShowOverlay
 }
 
-func (a *App) positionOverlayCenter() {
-	if a.overlayWindow == nil {
-		return
-	}
-	s := hotkey.GetMainScreenInfo()
-	overlayWidth := 240
-	x := (s.Width - overlayWidth) / 2
-	y := s.MenuBarHeight + 8 // just below menu bar / notch
-	a.overlayWindow.SetRelativePosition(x, y)
-}
-
 // --- Recording Pipeline ---
 
 func (a *App) startRec() {
@@ -565,7 +544,6 @@ func (a *App) startRec() {
 	a.isRecording = true
 	a.setState("recording")
 
-	// Enable Escape key to cancel recording
 	hotkey.StartEscapeMonitor(func() {
 		a.recordingMu.Lock()
 		defer a.recordingMu.Unlock()
@@ -621,7 +599,6 @@ func (a *App) startHandsfree() {
 	}
 	a.setState("recording")
 
-	// Enable Escape key to cancel hands-free recording
 	hotkey.StartEscapeMonitor(func() {
 		a.recordingMu.Lock()
 		defer a.recordingMu.Unlock()
@@ -843,8 +820,8 @@ func (a *App) handleStopAndProcess(rec *audio.Recording, gen uint64) {
 		notify.Send("vox", tr.cleaned)
 	}
 
-	if a.wailsApp != nil {
-		a.wailsApp.Event.Emit("transcription", map[string]string{
+	if a.ui != nil {
+		a.ui.EmitEvent("transcription", map[string]string{
 			"raw":     tr.raw,
 			"cleaned": tr.cleaned,
 		})
@@ -889,7 +866,6 @@ func (a *App) transcribeAndCleanup(audioFile string, ctx *windowctx.Context) (tr
 		return transcriptionResult{}, fmt.Errorf("transcription: %w", err)
 	}
 
-	// Filter known Whisper hallucinations (silence/short audio)
 	if isHallucination(rawText) {
 		return transcriptionResult{}, fmt.Errorf("no speech detected")
 	}
@@ -940,7 +916,6 @@ func isHallucination(text string) bool {
 	if normalized == "" {
 		return true
 	}
-	// Strip all non-letter characters for matching (handles unicode dashes etc.)
 	stripped := stripNonLetters(normalized)
 	for _, h := range whisperHallucinations {
 		hStripped := stripNonLetters(h)
