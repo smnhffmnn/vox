@@ -15,6 +15,11 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// NSWindowCollectionBehaviorCanJoinAllApplications (macOS 13+, 1 << 18).
+// Not yet in Wails v3 alpha.74 — defined here as raw bitmask value.
+// Makes the overlay appear on fullscreen app spaces, not just desktop spaces.
+const canJoinAllApplications application.MacWindowCollectionBehavior = 1 << 18
+
 func printUsage() {
 	fmt.Fprintf(os.Stderr, `vox — Speech-to-Text Dictation
 
@@ -73,7 +78,6 @@ func runDesktop() {
 		URL:               "/overlay.html",
 		Width:             240,
 		Height:            36,
-		AlwaysOnTop:       true,
 		Frameless:         true,
 		DisableResize:     true,
 		Hidden:            true,
@@ -84,7 +88,7 @@ func runDesktop() {
 			Backdrop:      application.MacBackdropTransparent,
 			DisableShadow: true,
 			WindowLevel:   application.MacWindowLevelScreenSaver,
-			CollectionBehavior: application.MacWindowCollectionBehaviorCanJoinAllSpaces |
+			CollectionBehavior: canJoinAllApplications |
 				application.MacWindowCollectionBehaviorStationary |
 				application.MacWindowCollectionBehaviorIgnoresCycle |
 				application.MacWindowCollectionBehaviorFullScreenAuxiliary,
