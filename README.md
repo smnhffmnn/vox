@@ -153,6 +153,71 @@ frontend/
 - **STT:** OpenAI Whisper API or local Whisper-compatible server
 - **LLM:** OpenAI GPT-4o-mini / Ollama / none
 
+## Manual Smoke Test
+
+Automated tests cover pure helpers, config parsing, history, cleanup prompt assembly, and STT HTTP boundaries. Everything below requires a running binary, real hardware, or OS integration and must be smoke-tested by hand before a release.
+
+Run through this list on each target platform. Items marked _(platform)_ apply only to that OS.
+
+### Start & Permissions
+
+- [ ] Binary starts without errors, no stderr noise beyond the banner.
+- [ ] Tray icon appears and switches between Idle / Recording / Processing states.
+- [ ] First launch prompts for required permissions; Settings → Status reflects the current grant state.
+- [ ] _(macOS)_ Accessibility and Microphone prompts appear; revoking and relaunching re-prompts.
+- [ ] _(Linux)_ User is in the `input` group (or equivalent); hotkey grab succeeds on both Wayland and X11.
+- [ ] _(Windows)_ WebView2 is detected; missing runtime produces an actionable error.
+
+### Hotkey & Recording Modes
+
+- [ ] Hold-to-talk: hold hotkey → status goes to Recording → release → cleaned text appears at the cursor.
+- [ ] Toggle: press once to start, press again to stop; text is injected after stop.
+- [ ] Hands-free: double-tap starts continuous mode; double-tap again (or timeout) stops it.
+- [ ] Escape during a recording discards the take — no injection, tray returns to Idle.
+- [ ] Very short hotkey tap (< 300ms) is discarded, not transcribed.
+- [ ] Changing the hotkey in Settings takes effect without a restart.
+
+### Audio
+
+- [ ] Default microphone is used; switching the system default between sessions picks up the new device.
+- [ ] Audio feedback sounds (start/stop/hands-free) play when enabled and stay silent when disabled.
+- [ ] Output device does not switch to Bluetooth during recording (regression guard for `NoFixedSizedCallback` / `FormatUnknown`).
+- [ ] Plugging/unplugging a USB/Bluetooth mic between recordings does not crash the app.
+
+### Transcription & Output
+
+- [ ] OpenAI backend: save API key → Test button turns green → real recording produces correct text.
+- [ ] Local backend: point `stt_url` at a running Whisper server → Test button green → recording works offline.
+- [ ] Backend switch in Settings is applied to the next recording without a restart.
+- [ ] Text injection via clipboard restores the prior clipboard contents.
+- [ ] Text injection via keystroke produces the exact string (no lost characters, no autocorrect clobbering).
+
+### Context-aware Cleanup, Snippets & Dictionary
+
+- [ ] IDE window (e.g. VS Code, JetBrains) in focus → cleanup uses the technical tone.
+- [ ] Chat window (e.g. Slack, iMessage) in focus → cleanup uses the casual tone.
+- [ ] Email client in focus → cleanup uses the formal tone.
+- [ ] Snippets: speaking a configured trigger phrase expands to the mapped text at the cursor.
+- [ ] Dictionary: a custom word added to `dictionary.txt` is spelled correctly in the transcription.
+- [ ] Cleanup backend set to "none" outputs the raw STT result unchanged.
+
+### UI
+
+- [ ] Overlay appears during Recording/Processing when enabled and stays hidden when disabled.
+- [ ] Settings window opens from the tray menu and persists changes after restart.
+- [ ] Dark / light mode follows the system setting and updates live when the OS theme changes.
+- [ ] History view lists recent transcriptions in reverse chronological order and supports search.
+- [ ] About view shows the correct version string.
+
+### Platform-specific
+
+- [ ] _(macOS)_ `.app` bundle launches after `xattr -cr /Applications/vox.app` without a Gatekeeper block.
+- [ ] _(macOS)_ Keystroke injection works into native apps (Terminal, Notes) and Electron apps (VS Code, Slack).
+- [ ] _(Linux)_ Hotkey fires under both Wayland and X11 sessions (Fedora ships both).
+- [ ] _(Linux)_ Keystroke injection works under the active display server; clipboard fallback works otherwise.
+- [ ] _(Windows)_ `SetWindowsHookEx`-based hotkey fires system-wide, including over elevated windows where possible.
+- [ ] _(Windows)_ WebView2 renders the UI without blank panels on a fresh user profile.
+
 ## License
 
 MIT — see [LICENSE](LICENSE)

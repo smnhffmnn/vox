@@ -13,10 +13,18 @@ jobs:
         include:
           - runner: macos-latest
             name: macOS
+            binary: vox
           - runner: ubuntu-latest
             name: Linux
+            binary: vox
+          - runner: windows-latest
+            name: Windows
+            binary: vox.exe
     runs-on: ${{ matrix.runner }}
     name: test (${{ matrix.name }})
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -41,12 +49,20 @@ jobs:
       - name: Test
         run: go test ./...
 
+      # Race detector only on Linux: worthwhile because app.go has real
+      # concurrency (recordingMu, doubletapTimer, handsfreeTimer, atomic.Uint64),
+      # and Linux is fast + stable for -race. macOS -race is slow and flaky on
+      # audio/timer code; Windows -race with CGO adds little over Linux.
+      - name: Test (race detector)
+        if: runner.os == 'Linux'
+        run: go test -race ./...
+
       - name: Build
         run: |
           VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
-          go build -ldflags "-s -w -X main.version=${VERSION}" -o vox .
+          go build -ldflags "-s -w -X main.version=${VERSION}" -o ${{ matrix.binary }} .
 
       - name: Verify binary
         run: |
-          ./vox --version | grep -q "vox"
+          ./${{ matrix.binary }} --version | grep -q "vox"
           echo "Binary verification passed"

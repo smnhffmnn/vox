@@ -12,15 +12,19 @@ import (
 	"time"
 )
 
+const defaultOpenAIBaseURL = "https://api.openai.com"
+
 type OpenAI struct {
-	apiKey string
-	model  string
+	apiKey  string
+	model   string
+	baseURL string
 }
 
 func NewOpenAI(apiKey string) *OpenAI {
 	return &OpenAI{
-		apiKey: apiKey,
-		model:  "whisper-1",
+		apiKey:  apiKey,
+		model:   "whisper-1",
+		baseURL: defaultOpenAIBaseURL,
 	}
 }
 
@@ -59,7 +63,7 @@ func (o *OpenAI) Transcribe(audioFile, language, prompt string) (string, error) 
 
 	w.Close()
 
-	req, err := http.NewRequest("POST", "https://api.openai.com/v1/audio/transcriptions", &buf)
+	req, err := http.NewRequest("POST", o.baseURL+"/v1/audio/transcriptions", &buf)
 	if err != nil {
 		return "", err
 	}
