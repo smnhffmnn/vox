@@ -7,11 +7,13 @@ type Transcriber interface {
 
 // NewTranscriber creates a Transcriber based on the backend name.
 // Supported backends: "openai" (default), "local".
-func NewTranscriber(backend, apiKey, url string) Transcriber {
+// model is forwarded to the OpenAI backend only (local servers ignore it);
+// an empty string uses the historical "whisper-1" default.
+func NewTranscriber(backend, apiKey, url, model string) Transcriber {
 	switch backend {
 	case "local":
 		return NewLocal(url)
 	default:
-		return NewOpenAI(apiKey)
+		return NewOpenAI(apiKey, model)
 	}
 }

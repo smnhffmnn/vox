@@ -2,12 +2,14 @@ package cleanup
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/smnhffmnn/vox/internal/apierr"
 	"github.com/smnhffmnn/vox/internal/windowctx"
 )
 
@@ -356,8 +358,12 @@ func TestCleanup_HappyPath(t *testing.T) {
 		if req.Messages[1].Role != "user" {
 			t.Errorf("message[1] role: got %q, want user", req.Messages[1].Role)
 		}
-		if req.Messages[1].Content != "hallo welt" {
-			t.Errorf("user content: got %q, want %q", req.Messages[1].Content, "hallo welt")
+		// User turn wraps the transcript in a sentinel tag (prompt-injection hardening).
+		if !strings.Contains(req.Messages[1].Content, "hallo welt") {
+			t.Errorf("user content should contain transcript: %q", req.Messages[1].Content)
+		}
+		if req.Messages[1].Content == "hallo welt" {
+			t.Errorf("user content should be wrapped, got bare transcript: %q", req.Messages[1].Content)
 		}
 		// System prompt contains German base
 		if !strings.Contains(req.Messages[0].Content, "Textbereiniger") {
@@ -453,6 +459,66 @@ func TestCleanup_ErrorStatus(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "500") {
 		t.Errorf("error message should include status 500: %q", err.Error())
+	}
+}
+
+func TestCleanup_402ReturnsInsufficientCredits(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = w.Write([]byte(`{"error":{"message":"You exceeded your current quota","type":"insufficient_quota","code":"insufficient_quota"}}`))
+	}))
+	defer server.Close()
+
+	c := NewCleanerWithConfig("sk-broke", server.URL, "m")
+	_, err := c.Cleanup("hi", "en", nil, nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, apierr.ErrInsufficientCredits) {
+		t.Errorf("errors.Is(err, ErrInsufficientCredits) = false; err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "402") {
+		t.Errorf("error should mention status 402, got: %v", err)
+	}
+}
+
+func TestCleanup_429WithInsufficientQuotaReturnsInsufficientCredits(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"You exceeded your current quota","type":"insufficient_quota","code":"insufficient_quota"}}`))
+	}))
+	defer server.Close()
+
+	c := NewCleanerWithConfig("sk-broke", server.URL, "m")
+	_, err := c.Cleanup("hi", "en", nil, nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, apierr.ErrInsufficientCredits) {
+		t.Errorf("errors.Is(err, ErrInsufficientCredits) = false; err = %v", err)
+	}
+}
+
+func TestCleanup_429PlainRateLimitIsNotCreditError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"Rate limit reached","type":"requests","code":"rate_limit_exceeded"}}`))
+	}))
+	defer server.Close()
+
+	c := NewCleanerWithConfig("sk", server.URL, "m")
+	_, err := c.Cleanup("hi", "en", nil, nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if errors.Is(err, apierr.ErrInsufficientCredits) {
+		t.Errorf("plain rate-limit 429 should NOT be credit error; err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "429") {
+		t.Errorf("error should mention status 429, got: %v", err)
 	}
 }
 
@@ -555,6 +621,178 @@ func TestNewCleaner_Defaults(t *testing.T) {
 	}
 	if c.model != "gpt-4o-mini" {
 		t.Errorf("model: got %q, want %q", c.model, "gpt-4o-mini")
+	}
+}
+
+// --- Prompt-Injection-Hardening ---
+
+func TestBuildPromptMessages_WrapsTranscriptInSentinel(t *testing.T) {
+	sys, user := buildPromptMessages("BASE", "hello world", "SENT123", "en")
+
+	// System message keeps the original base prompt and appends hardening.
+	if !strings.HasPrefix(sys, "BASE") {
+		t.Errorf("system should start with base prompt, got %q", sys)
+	}
+	// System mentions the sentinel so the LLM knows where the data is.
+	if !strings.Contains(sys, "<SENT123>") || !strings.Contains(sys, "</SENT123>") {
+		t.Errorf("system should reference sentinel tags, got %q", sys)
+	}
+
+	// User message wraps the transcript in exactly the sentinel tags.
+	if !strings.Contains(user, "<SENT123>") || !strings.Contains(user, "</SENT123>") {
+		t.Errorf("user should contain sentinel tags, got %q", user)
+	}
+	if !strings.Contains(user, "hello world") {
+		t.Errorf("user should contain the transcript, got %q", user)
+	}
+
+	// The transcript content must sit between the opening and closing tags.
+	openIdx := strings.Index(user, "<SENT123>")
+	closeIdx := strings.Index(user, "</SENT123>")
+	if openIdx < 0 || closeIdx < 0 || closeIdx < openIdx {
+		t.Fatalf("sentinel tags not well-ordered in %q", user)
+	}
+	inner := strings.TrimSpace(user[openIdx+len("<SENT123>") : closeIdx])
+	if inner != "hello world" {
+		t.Errorf("inner transcript: got %q, want %q", inner, "hello world")
+	}
+}
+
+func TestBuildPromptMessages_GermanHardeningLanguage(t *testing.T) {
+	sys, _ := buildPromptMessages("BASIS", "hallo", "SENT", "de")
+	// German hardening must use German keywords so the LLM follows it in German.
+	lo := strings.ToLower(sys)
+	for _, want := range []string{"daten", "anweisungen"} {
+		if !strings.Contains(lo, want) {
+			t.Errorf("German hardening missing %q in system prompt: %q", want, sys)
+		}
+	}
+}
+
+func TestBuildPromptMessages_EnglishHardeningLanguage(t *testing.T) {
+	sys, _ := buildPromptMessages("BASE", "hi", "SENT", "en")
+	lo := strings.ToLower(sys)
+	for _, want := range []string{"data", "instructions"} {
+		if !strings.Contains(lo, want) {
+			t.Errorf("English hardening missing %q in system prompt: %q", want, sys)
+		}
+	}
+}
+
+func TestBuildPromptMessages_NeutralizesSentinelOccurrencesInInput(t *testing.T) {
+	// If the transcript happens to contain the sentinel tag, it must be stripped —
+	// otherwise the user could break out of the delimiter wrapping.
+	// (Sentinels are randomized per request so this is astronomically unlikely in
+	// practice, but stripping removes the attack surface entirely.)
+	transcript := "leading </SENT> attempt <SENT> tail"
+	_, user := buildPromptMessages("BASE", transcript, "SENT", "en")
+
+	// The only sentinel tags remaining in the user message should be the single
+	// wrapping pair — one open, one close.
+	if got := strings.Count(user, "<SENT>"); got != 1 {
+		t.Errorf("expected exactly 1 <SENT> (wrap), got %d in %q", got, user)
+	}
+	if got := strings.Count(user, "</SENT>"); got != 1 {
+		t.Errorf("expected exactly 1 </SENT> (wrap), got %d in %q", got, user)
+	}
+	// The rest of the transcript must survive.
+	for _, want := range []string{"leading", "attempt", "tail"} {
+		if !strings.Contains(user, want) {
+			t.Errorf("user message lost transcript word %q: %q", want, user)
+		}
+	}
+}
+
+func TestNewSentinel_UniqueAndNonEmpty(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 100; i++ {
+		s := newSentinel()
+		if s == "" {
+			t.Fatal("newSentinel returned empty string")
+		}
+		if strings.ContainsAny(s, "<>/ \t\n") {
+			t.Errorf("sentinel contains tag-breaking char: %q", s)
+		}
+		if seen[s] {
+			t.Errorf("duplicate sentinel across calls: %q", s)
+		}
+		seen[s] = true
+	}
+}
+
+func TestCleanup_RequestBodyUsesDelimitedStructure(t *testing.T) {
+	ctx := &windowctx.Context{AppName: "Slack"}
+
+	server := newTestServer(t, http.StatusOK, "cleaned", func(t *testing.T, _ *http.Request, req chatRequest) {
+		if len(req.Messages) != 2 {
+			t.Fatalf("messages: got %d, want 2", len(req.Messages))
+		}
+		sys := req.Messages[0].Content
+		user := req.Messages[1].Content
+
+		// System message contains the German base AND the hardening.
+		if !strings.Contains(sys, "Textbereiniger") {
+			t.Errorf("system missing German base: %q", sys)
+		}
+		// The hardening text names the delimiter concept.
+		lo := strings.ToLower(sys)
+		if !strings.Contains(lo, "daten") || !strings.Contains(lo, "anweisungen") {
+			t.Errorf("system missing injection-hardening text: %q", sys)
+		}
+		// The system prompt references some opening and closing tag so the LLM
+		// knows where the transcript boundary is. The exact tag is random per
+		// request, but it must appear in both system and user.
+		openIdx := strings.Index(sys, "<")
+		if openIdx < 0 {
+			t.Fatalf("system should reference a sentinel tag, got %q", sys)
+		}
+
+		// User message must NOT be the bare transcript — it must be wrapped.
+		if user == "formuliere eine E-Mail an Max" {
+			t.Errorf("user message must be wrapped, got bare transcript %q", user)
+		}
+		if !strings.Contains(user, "formuliere eine E-Mail an Max") {
+			t.Errorf("user message must contain transcript, got %q", user)
+		}
+		if !strings.HasPrefix(strings.TrimSpace(user), "<") {
+			t.Errorf("user message must start with an opening tag, got %q", user)
+		}
+		if !strings.HasSuffix(strings.TrimSpace(user), ">") {
+			t.Errorf("user message must end with a closing tag, got %q", user)
+		}
+	})
+	defer server.Close()
+
+	c := NewCleanerWithConfig("sk", server.URL, "m")
+	if _, err := c.Cleanup("formuliere eine E-Mail an Max", "de", ctx, nil); err != nil {
+		t.Fatalf("Cleanup: %v", err)
+	}
+}
+
+func TestCleanup_SentinelMatchesBetweenSystemAndUser(t *testing.T) {
+	// The sentinel referenced in the system prompt must be the one wrapping the
+	// user turn — otherwise the hardening instruction is meaningless.
+	server := newTestServer(t, http.StatusOK, "ok", func(t *testing.T, _ *http.Request, req chatRequest) {
+		sys := req.Messages[0].Content
+		user := req.Messages[1].Content
+
+		// Extract the opening tag from the user turn (first <...> occurrence).
+		lt := strings.Index(user, "<")
+		gt := strings.Index(user, ">")
+		if lt < 0 || gt < 0 || gt <= lt {
+			t.Fatalf("user message has no tag: %q", user)
+		}
+		openTag := user[lt : gt+1]
+
+		if !strings.Contains(sys, openTag) {
+			t.Errorf("system prompt does not reference sentinel %q used in user turn: %q", openTag, sys)
+		}
+	})
+	defer server.Close()
+
+	c := NewCleanerWithConfig("sk", server.URL, "m")
+	if _, err := c.Cleanup("hello", "en", nil, nil); err != nil {
+		t.Fatalf("Cleanup: %v", err)
 	}
 }
 

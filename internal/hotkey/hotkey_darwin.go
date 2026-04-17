@@ -12,18 +12,29 @@ void voxStartMonitor(void);
 void voxStopMonitor(void);
 void voxStartEscapeMonitor(void);
 void voxStopEscapeMonitor(void);
+_Bool voxEscapeMonitorCanConsume(void);
 void voxGetMainScreenInfo(int *x, int *y, int *width, int *height, int *menuBarHeight);
 */
 import "C"
 
 import (
 	"sync"
+	"time"
 )
+
+// modifierStartDelay is the window during which a modifier-hotkey press can be
+// cancelled by another key press (e.g. Option+L = @ on DE layout). See mission
+// card 005_tdd-modifier-aware-delay / vox-open-issues.md issue 5.
+const modifierStartDelay = 50 * time.Millisecond
 
 var (
 	mu         sync.Mutex
 	onPressF   func()
 	onReleaseF func()
+
+	// decider is non-nil only when the hotkey is a modifier; routes press/up/other
+	// events through the modifier-aware delay guard.
+	decider *startDecider
 
 	escapeMu  sync.Mutex
 	onEscapeF func()
@@ -32,8 +43,15 @@ var (
 //export goHotkeyDown
 func goHotkeyDown() {
 	mu.Lock()
+	d := decider
 	f := onPressF
 	mu.Unlock()
+	if d != nil {
+		// Modifier hotkey: run through the delay guard. onStart (wired in
+		// Listen) will call onPressF once the delay elapses without a cancel.
+		d.hotkeyDown()
+		return
+	}
 	if f != nil {
 		go f()
 	}
@@ -42,10 +60,33 @@ func goHotkeyDown() {
 //export goHotkeyUp
 func goHotkeyUp() {
 	mu.Lock()
+	d := decider
 	f := onReleaseF
 	mu.Unlock()
+	if d != nil {
+		_, wasStarted := d.hotkeyUp()
+		if !wasStarted {
+			// Release within the delay window, or no start ever fired —
+			// do not propagate a release that has no matching start.
+			return
+		}
+		if f != nil {
+			go f()
+		}
+		return
+	}
 	if f != nil {
 		go f()
+	}
+}
+
+//export goOtherKeyDown
+func goOtherKeyDown() {
+	mu.Lock()
+	d := decider
+	mu.Unlock()
+	if d != nil {
+		d.otherKey()
 	}
 }
 
@@ -60,11 +101,18 @@ func goEscapePressed() {
 }
 
 // StartEscapeMonitor registers a global Escape key listener.
-func StartEscapeMonitor(onEscape func()) {
+// Returns true if ESC events will be consumed (not passed to the active app),
+// false if running in degraded mode (listen-only, ESC leaks through) because
+// Accessibility permission was not granted.
+func StartEscapeMonitor(onEscape func()) bool {
 	escapeMu.Lock()
 	onEscapeF = onEscape
 	escapeMu.Unlock()
 	C.voxStartEscapeMonitor()
+	// voxStartEscapeMonitor dispatches to the main queue; give it a moment to
+	// create the tap before we check the result.
+	time.Sleep(50 * time.Millisecond)
+	return bool(C.voxEscapeMonitorCanConsume())
 }
 
 // StopEscapeMonitor removes the global Escape key listener.
@@ -105,6 +153,18 @@ func (d *darwinListener) Listen(onPress func(), onRelease func()) error {
 	mu.Lock()
 	onPressF = onPress
 	onReleaseF = onRelease
+	if isModifierHotkey(d.key) {
+		decider = newStartDecider(modifierStartDelay, func() {
+			mu.Lock()
+			f := onPressF
+			mu.Unlock()
+			if f != nil {
+				go f()
+			}
+		})
+	} else {
+		decider = nil
+	}
 	mu.Unlock()
 
 	keyCode := darwinKeyCode(d.key)
@@ -118,9 +178,24 @@ func (d *darwinListener) Listen(onPress func(), onRelease func()) error {
 func (d *darwinListener) Close() error {
 	d.closeOnce.Do(func() {
 		C.voxStopMonitor()
+		mu.Lock()
+		decider = nil
+		mu.Unlock()
 		close(d.closeCh)
 	})
 	return nil
+}
+
+// isModifierHotkey reports whether the given hotkey is a modifier key that
+// can be part of a typed combo (e.g. Option for Option+L = @). Non-modifier
+// hotkeys like the F13–F20 row are not at risk and skip the delay.
+func isModifierHotkey(k Key) bool {
+	switch k {
+	case RightOption, RightAlt:
+		return true
+	default:
+		return false
+	}
 }
 
 func darwinKeyCode(k Key) int {

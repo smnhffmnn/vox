@@ -225,7 +225,8 @@ func linuxKeyCode(k Key) uint16 {
 }
 
 // StartEscapeMonitor is a no-op on Linux (TODO: implement via evdev).
-func StartEscapeMonitor(onEscape func()) {}
+// Always returns false (cannot consume ESC).
+func StartEscapeMonitor(onEscape func()) bool { return false }
 
 // StopEscapeMonitor is a no-op on Linux.
 func StopEscapeMonitor() {}

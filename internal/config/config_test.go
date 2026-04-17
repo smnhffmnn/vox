@@ -41,6 +41,7 @@ func TestDefaultConfig(t *testing.T) {
 		{"STTURL empty", cfg.STTURL, ""},
 		{"LLMURL empty", cfg.LLMURL, ""},
 		{"LLMModel empty", cfg.LLMModel, ""},
+		{"STTModel empty", cfg.STTModel, ""},
 	}
 
 	for _, tt := range tests {
@@ -125,6 +126,7 @@ audio_feedback: false
 show_overlay: false
 stt_backend: local
 stt_url: http://localhost:9000
+stt_model: gpt-4o-transcribe
 llm_backend: ollama
 llm_url: http://localhost:11434
 llm_model: qwen2.5:7b
@@ -167,6 +169,9 @@ llm_model: qwen2.5:7b
 	}
 	if cfg.STTURL != "http://localhost:9000" {
 		t.Errorf("STTURL = %q", cfg.STTURL)
+	}
+	if cfg.STTModel != "gpt-4o-transcribe" {
+		t.Errorf("STTModel = %q", cfg.STTModel)
 	}
 	if cfg.LLMBackend != "ollama" {
 		t.Errorf("LLMBackend = %q", cfg.LLMBackend)
@@ -334,6 +339,7 @@ func TestSaveLoad_Roundtrip(t *testing.T) {
 	original.ShowOverlay = false
 	original.STTBackend = "local"
 	original.STTURL = "http://stt.local"
+	original.STTModel = "gpt-4o-mini-transcribe"
 	original.LLMBackend = "ollama"
 	original.LLMURL = "http://llm.local"
 	original.LLMModel = "llama3:8b"
@@ -364,6 +370,7 @@ func TestSaveLoad_Roundtrip(t *testing.T) {
 		{"ShowOverlay", loaded.ShowOverlay, original.ShowOverlay},
 		{"STTBackend", loaded.STTBackend, original.STTBackend},
 		{"STTURL", loaded.STTURL, original.STTURL},
+		{"STTModel", loaded.STTModel, original.STTModel},
 		{"LLMBackend", loaded.LLMBackend, original.LLMBackend},
 		{"LLMURL", loaded.LLMURL, original.LLMURL},
 		{"LLMModel", loaded.LLMModel, original.LLMModel},
@@ -416,6 +423,9 @@ func TestSave_OmitsEmptyOptionalURLs(t *testing.T) {
 	}
 	if strings.Contains(content, "llm_model:") {
 		t.Error("empty LLMModel should not appear in saved config")
+	}
+	if strings.Contains(content, "stt_model:") {
+		t.Error("empty STTModel should not appear in saved config")
 	}
 	// stt_backend and llm_backend are always written.
 	if !strings.Contains(content, "stt_backend:") {

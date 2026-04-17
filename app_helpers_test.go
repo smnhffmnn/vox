@@ -26,9 +26,25 @@ func TestIsHallucination(t *testing.T) {
 		{"mooji url", "www.mooji.org", true},
 		{"watchmojo copyright", "Copyright WatchMojo 2020", true},
 		{"subtitles by marker", "subtitles by someone", true},
+		// Issue 9 additions — YouTube outro patterns and ZDF/SWR markers.
+		{"abonniert den Kanal", "Abonniert den Kanal für mehr Videos", true},
+		{"SWR 2019 outro", "Untertitel: SWR 2019", true},
+		// Outro URL regex — URL at line end is a classic Whisper hallucination.
+		{"url at end (de)", "Mehr Informationen auf www.mein-blog.de", true},
+		{"url at end (com)", "Besuche uns auf www.example.com", true},
+		{"url at end (org)", "Sieh dich um auf www.foo.org", true},
+		{"url at end with trailing whitespace", "Danke für's Zuhören www.blog.de  \n", true},
 		// Negative cases that could false-trigger are worth guarding.
 		{"word 'thanks' alone is fine", "Thanks, that was great.", false},
 		{"word 'subtitles' alone is fine", "Add subtitles to the video.", false},
+		// "abonniert" alone (e.g. legitimate usage) must not trigger — only
+		// "abonniert den" does. Catches the YouTube-outro pattern without
+		// breaking normal German dictation about subscriptions.
+		{"zeitung abonniert alone is fine", "Ich habe die Zeitung abonniert.", false},
+		// URL regex only fires at end of line — mid-sentence URLs are legitimate
+		// dictation content and must pass through.
+		{"url mid-sentence is fine", "Die Webseite www.mein-blog.de steht dort.", false},
+		{"url is not 'www' prefixed is fine", "Die Domain foo.de gehört uns, mehr nicht.", false},
 	}
 
 	for _, tt := range tests {

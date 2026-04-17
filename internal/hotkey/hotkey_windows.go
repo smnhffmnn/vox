@@ -154,7 +154,8 @@ func readVkCode(lParam uintptr) uint32 {
 }
 
 // StartEscapeMonitor is a no-op on Windows (TODO: implement via keyboard hook).
-func StartEscapeMonitor(onEscape func()) {}
+// Always returns false (cannot consume ESC).
+func StartEscapeMonitor(onEscape func()) bool { return false }
 
 // StopEscapeMonitor is a no-op on Windows.
 func StopEscapeMonitor() {}

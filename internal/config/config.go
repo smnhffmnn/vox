@@ -26,6 +26,7 @@ type Config struct {
 	// Backend
 	STTBackend string // "openai" (default) or "local"
 	STTURL     string // URL for local Whisper server
+	STTModel   string // OpenAI transcription model override: "whisper-1" (default), "gpt-4o-transcribe", "gpt-4o-mini-transcribe"
 	LLMBackend string // "openai" (default), "ollama", "none"
 	LLMURL     string // Base URL for Ollama
 	LLMModel   string // Model name override
@@ -117,6 +118,9 @@ func (cfg *Config) Save() error {
 	if cfg.STTURL != "" {
 		b.WriteString(fmt.Sprintf("stt_url: %s\n", cfg.STTURL))
 	}
+	if cfg.STTModel != "" {
+		b.WriteString(fmt.Sprintf("stt_model: %s\n", cfg.STTModel))
+	}
 	b.WriteString(fmt.Sprintf("llm_backend: %s\n", cfg.LLMBackend))
 	if cfg.LLMURL != "" {
 		b.WriteString(fmt.Sprintf("llm_url: %s\n", cfg.LLMURL))
@@ -169,6 +173,8 @@ func parseConfig(data string, cfg *Config) {
 			cfg.STTBackend = value
 		case "stt_url":
 			cfg.STTURL = value
+		case "stt_model":
+			cfg.STTModel = value
 		case "llm_backend":
 			cfg.LLMBackend = value
 		case "llm_url":

@@ -1,16 +1,19 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/smnhffmnn/vox/internal/apierr"
 	"github.com/smnhffmnn/vox/internal/audio"
 	"github.com/smnhffmnn/vox/internal/cleanup"
 	"github.com/smnhffmnn/vox/internal/config"
@@ -24,6 +27,8 @@ import (
 	"github.com/smnhffmnn/vox/internal/stt"
 	"github.com/smnhffmnn/vox/internal/windowctx"
 )
+
+const insufficientCreditsMessage = "OpenAI-Guthaben aufgebraucht — API-Key oder Plan prüfen"
 
 var version = "dev"
 
@@ -557,13 +562,16 @@ func (a *App) startRec() {
 	a.isRecording = true
 	a.setState("recording")
 
-	hotkey.StartEscapeMonitor(func() {
+	canConsume := hotkey.StartEscapeMonitor(func() {
 		a.recordingMu.Lock()
 		defer a.recordingMu.Unlock()
 		if a.isRecording {
 			a.stopAndDiscard()
 		}
 	})
+	if !canConsume {
+		fmt.Fprintf(os.Stderr, "vox: ESC monitor running in degraded mode (listen-only) — grant Accessibility permission to prevent ESC from leaking to the active app\n")
+	}
 }
 
 // stopAndProcess must be called with recordingMu held.
@@ -614,7 +622,7 @@ func (a *App) startHandsfree() {
 	}
 	a.setState("recording")
 
-	hotkey.StartEscapeMonitor(func() {
+	canConsume := hotkey.StartEscapeMonitor(func() {
 		a.recordingMu.Lock()
 		defer a.recordingMu.Unlock()
 		if a.handsfreeActive {
@@ -623,6 +631,9 @@ func (a *App) startHandsfree() {
 			a.stopAndDiscard()
 		}
 	})
+	if !canConsume {
+		fmt.Fprintf(os.Stderr, "vox: ESC monitor running in degraded mode (listen-only) — grant Accessibility permission to prevent ESC from leaking to the active app\n")
+	}
 	a.handsfreeDone = make(chan struct{})
 	hfTimeout := a.getHandsfreeTimeout()
 	if hfTimeout > 0 {
@@ -804,10 +815,16 @@ func (a *App) handleStopAndProcess(rec *audio.Recording, gen uint64) {
 	tr, err := a.transcribeAndCleanup(audioFile, wctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "vox: %v\n", err)
+		if errors.Is(err, apierr.ErrInsufficientCredits) {
+			a.notifyInsufficientCredits()
+		}
 		if a.recordingGen.Load() == gen {
 			a.setState("idle")
 		}
 		return
+	}
+	if tr.cleanupCreditErr {
+		a.notifyInsufficientCredits()
 	}
 
 	appCtx := ""
@@ -854,12 +871,33 @@ func (a *App) handleStopAndProcess(rec *audio.Recording, gen uint64) {
 type transcriptionResult struct {
 	raw     string
 	cleaned string
+	// cleanupCreditErr is true when the cleanup step failed with an
+	// insufficient-credits error. The pipeline degrades to the raw text in
+	// that case, but the application layer still needs to surface the
+	// billing problem to the user.
+	cleanupCreditErr bool
+}
+
+func (a *App) notifyInsufficientCredits() {
+	if a.ui != nil {
+		a.ui.EmitEvent("api-error", map[string]string{
+			"kind":    "insufficient_credits",
+			"message": insufficientCreditsMessage,
+		})
+	}
+	if !a.getNotifications() {
+		return
+	}
+	if err := notify.Send("vox", insufficientCreditsMessage); err != nil {
+		fmt.Fprintf(os.Stderr, "vox: notify: %v\n", err)
+	}
 }
 
 func (a *App) transcribeAndCleanup(audioFile string, ctx *windowctx.Context) (transcriptionResult, error) {
 	a.cfg.RLock()
 	sttBackend := a.cfg.STTBackend
 	sttURL := a.cfg.STTURL
+	sttModel := a.cfg.STTModel
 	llmBackend := a.cfg.LLMBackend
 	llmURL := a.cfg.LLMURL
 	llmModel := a.cfg.LLMModel
@@ -881,7 +919,7 @@ func (a *App) transcribeAndCleanup(audioFile string, ctx *windowctx.Context) (tr
 	a.dataMu.RUnlock()
 
 	whisperPrompt := strings.Join(dictionary, ", ")
-	transcriber := stt.NewTranscriber(sttBackend, apiKey, sttURL)
+	transcriber := stt.NewTranscriber(sttBackend, apiKey, sttURL, sttModel)
 	rawText, err := transcriber.Transcribe(audioFile, lang, whisperPrompt)
 	if err != nil {
 		return transcriptionResult{}, fmt.Errorf("transcription: %w", err)
@@ -892,11 +930,15 @@ func (a *App) transcribeAndCleanup(audioFile string, ctx *windowctx.Context) (tr
 	}
 
 	result := rawText
+	var cleanupCreditErr bool
 	if !raw {
 		cleaner := cleanup.NewCleanerFromConfig(llmBackend, apiKey, llmURL, llmModel)
 		cleaned, err := cleanupWithPrompts(cleaner, rawText, lang, ctx, dictionary, customPrompts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "cleanup failed, using raw text: %v\n", err)
+			if errors.Is(err, apierr.ErrInsufficientCredits) {
+				cleanupCreditErr = true
+			}
 		} else {
 			result = cleaned
 		}
@@ -908,7 +950,7 @@ func (a *App) transcribeAndCleanup(audioFile string, ctx *windowctx.Context) (tr
 		}
 	}
 
-	return transcriptionResult{raw: rawText, cleaned: result}, nil
+	return transcriptionResult{raw: rawText, cleaned: result, cleanupCreditErr: cleanupCreditErr}, nil
 }
 
 func cleanupWithPrompts(c cleanup.CleanerInterface, text, lang string, ctx *windowctx.Context, dict []string, prompts map[string]string) (string, error) {
@@ -930,12 +972,45 @@ var whisperHallucinations = []string{
 	"copyright watchmojo",
 	"please subscribe",
 	"bitte abonnieren",
+	// Issue 9: additional YouTube-outro and broadcaster markers.
+	// "abonniert den" catches "Abonniert den Kanal" without false-matching
+	// legitimate uses of "abonniert" in normal dictation ("Zeitung abonniert").
+	"abonniert den",
+	// SWR outros usually appear as "Untertitel: SWR YYYY". "untertitel" alone
+	// would catch it already, but in the rare case Whisper drops the prefix
+	// the "swr YYYY" number pattern is specific enough to be safe.
+	"swr 2019",
+	"swr 2020",
+	"swr 2021",
+	"swr 2022",
+	"swr 2023",
+	"swr 2024",
+	"swr 2025",
+	"swr 2026",
+}
+
+// whisperHallucinationRegexps catches patterns that require structure around
+// them (word boundaries, line anchors) — things plain substring matching
+// cannot express. Applied against the lowercased, trimmed text BEFORE the
+// punctuation-stripping pass.
+var whisperHallucinationRegexps = []*regexp.Regexp{
+	// Outro URLs at the end of the transcript: "... www.mein-blog.de".
+	// Anchored at end of line so legitimate mid-sentence URLs pass through.
+	// Restricted to "www.*" to avoid catching bare domains mentioned in
+	// dictation (e.g. "die Domain foo.de gehört uns").
+	regexp.MustCompile(`\bwww\.[a-z0-9.\-]+\.(de|com|org|net)\b\s*$`),
 }
 
 func isHallucination(text string) bool {
 	normalized := strings.TrimSpace(strings.ToLower(text))
 	if normalized == "" {
 		return true
+	}
+	for _, re := range whisperHallucinationRegexps {
+		if re.MatchString(normalized) {
+			fmt.Fprintf(os.Stderr, "vox: filtered hallucination: %q\n", text)
+			return true
+		}
 	}
 	stripped := stripNonLetters(normalized)
 	for _, h := range whisperHallucinations {

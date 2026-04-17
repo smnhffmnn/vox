@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/smnhffmnn/vox/internal/cleanup"
 	"github.com/smnhffmnn/vox/internal/config"
 	"github.com/smnhffmnn/vox/internal/keychain"
 	"github.com/smnhffmnn/vox/internal/stt"
@@ -25,9 +26,12 @@ func runTranscribe(args []string) int {
 	file := fs.String("f", "", "Audio file to transcribe (required)")
 	lang := fs.String("l", "", "Language hint (e.g. de, en) — overrides config")
 	asJSON := fs.Bool("json", false, "Output as JSON")
+	raw := fs.Bool("raw", false, "Skip LLM cleanup, return raw STT output")
 	backend := fs.String("backend", "", "STT backend: openai (default) or local — overrides config")
 	sttURL := fs.String("stt-url", "", "URL for local Whisper server — overrides config")
 	apiKey := fs.String("api-key", "", "OpenAI API key — overrides env/keychain")
+	llmBackendFlag := fs.String("llm-backend", "", "LLM backend: openai, ollama, none — overrides config")
+	llmURLFlag := fs.String("llm-url", "", "LLM base URL — overrides config")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -91,11 +95,35 @@ func runTranscribe(args []string) int {
 	whisperPrompt := strings.Join(dictionary, ", ")
 
 	// Transcribe
-	transcriber := stt.NewTranscriber(sttBackend, key, sttServerURL)
+	transcriber := stt.NewTranscriber(sttBackend, key, sttServerURL, cfg.STTModel)
 	text, err := transcriber.Transcribe(*file, language, whisperPrompt)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "vox transcribe: %v\n", err)
 		return 1
+	}
+
+	// LLM cleanup (default: on, --raw disables)
+	if !*raw {
+		llmBackend := cfg.LLMBackend
+		if llmBackend == "" {
+			llmBackend = "openai"
+		}
+		if *llmBackendFlag != "" {
+			llmBackend = *llmBackendFlag
+		}
+
+		llmURL := cfg.LLMURL
+		if *llmURLFlag != "" {
+			llmURL = *llmURLFlag
+		}
+
+		cleaner := cleanup.NewCleanerFromConfig(llmBackend, key, llmURL, cfg.LLMModel)
+		cleaned, err := cleaner.Cleanup(text, language, nil, dictionary)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "vox transcribe: cleanup failed, using raw text: %v\n", err)
+		} else {
+			text = cleaned
+		}
 	}
 
 	if *asJSON {

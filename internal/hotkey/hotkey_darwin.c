@@ -4,6 +4,7 @@
 // Defined in Go via //export
 extern void goHotkeyDown(void);
 extern void goHotkeyUp(void);
+extern void goOtherKeyDown(void);
 extern void goEscapePressed(void);
 
 static int targetKeyCode = 61; // Right Option default
@@ -11,11 +12,13 @@ static int targetKeyCode = 61; // Right Option default
 static id keyDownMonitor = nil;
 static id keyUpMonitor = nil;
 static id flagsMonitor = nil;
+static id otherKeyDownMonitor = nil; // for modifier-hotkey delay-cancel detection
 static BOOL targetKeyPressed = NO;
 
 // Escape key via CGEvent tap (more reliable than NSEvent global monitor)
 static CFMachPortRef escapeTapPort = NULL;
 static CFRunLoopSourceRef escapeTapSource = NULL;
+static BOOL escapeTapCanConsume = NO; // YES when using kCGEventTapOptionDefault (can swallow ESC)
 
 void voxSetTargetKeyCode(int code) {
     targetKeyCode = code;
@@ -61,6 +64,14 @@ void voxStartMonitor(void) {
                     }
                 }
             }];
+        // Also observe all other keyDowns so the Go-side startDecider can
+        // cancel a pending start if the user is actually typing a combo like
+        // Option+L (= @ on DE layout). See issue 5 / mission 005_tdd-modifier-aware-delay.
+        otherKeyDownMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskKeyDown
+            handler:^(NSEvent *event) {
+                (void)event; // any keyDown counts as "other key"
+                goOtherKeyDown();
+            }];
     } else {
         keyDownMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskKeyDown
             handler:^(NSEvent *event) {
@@ -85,6 +96,9 @@ static CGEventRef escapeTapCallback(CGEventTapProxy proxy, CGEventType type, CGE
         CGKeyCode keyCode = (CGKeyCode)CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
         if (keyCode == 53) { // Escape
             goEscapePressed();
+            if (escapeTapCanConsume) {
+                return NULL; // consume ESC — don't pass to active app
+            }
         }
     }
     // Re-enable tap if it gets disabled (system does this under load)
@@ -93,26 +107,43 @@ static CGEventRef escapeTapCallback(CGEventTapProxy proxy, CGEventType type, CGE
             CGEventTapEnable(escapeTapPort, true);
         }
     }
-    return event; // pass event through (don't consume it)
+    return event; // pass other events through
 }
 
 void voxStartEscapeMonitor(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (escapeTapPort != NULL) return;
 
-        // Listen-only tap (kCGEventTapOptionListenOnly) — doesn't require extra permissions
-        // beyond what we already have for Accessibility
+        // Try active tap first (kCGEventTapOptionDefault) — can consume ESC events
+        // but requires Accessibility permission.
         escapeTapPort = CGEventTapCreate(
             kCGSessionEventTap,
             kCGHeadInsertEventTap,
-            kCGEventTapOptionListenOnly,
+            kCGEventTapOptionDefault,
             CGEventMaskBit(kCGEventKeyDown),
             escapeTapCallback,
             NULL
         );
 
+        if (escapeTapPort != NULL) {
+            escapeTapCanConsume = YES;
+        } else {
+            // Fallback: listen-only tap (degraded — ESC leaks to active app)
+            fprintf(stderr, "vox: escape tap: active tap failed (no accessibility permission?) — falling back to listen-only\n");
+            escapeTapPort = CGEventTapCreate(
+                kCGSessionEventTap,
+                kCGHeadInsertEventTap,
+                kCGEventTapOptionListenOnly,
+                CGEventMaskBit(kCGEventKeyDown),
+                escapeTapCallback,
+                NULL
+            );
+            escapeTapCanConsume = NO;
+        }
+
         if (escapeTapPort == NULL) {
-            fprintf(stderr, "vox: escape tap: failed to create (no accessibility permission?)\n");
+            fprintf(stderr, "vox: escape tap: failed to create even in listen-only mode\n");
+            escapeTapCanConsume = NO;
             return;
         }
 
@@ -131,8 +162,13 @@ void voxStopEscapeMonitor(void) {
             CFRelease(escapeTapPort);
             escapeTapSource = NULL;
             escapeTapPort = NULL;
+            escapeTapCanConsume = NO;
         }
     });
+}
+
+BOOL voxEscapeMonitorCanConsume(void) {
+    return escapeTapCanConsume;
 }
 
 // Get main screen dimensions for overlay positioning
@@ -167,6 +203,10 @@ void voxStopMonitor(void) {
     if (keyUpMonitor != nil) {
         [NSEvent removeMonitor:keyUpMonitor];
         keyUpMonitor = nil;
+    }
+    if (otherKeyDownMonitor != nil) {
+        [NSEvent removeMonitor:otherKeyDownMonitor];
+        otherKeyDownMonitor = nil;
     }
     targetKeyPressed = NO;
 }

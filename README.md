@@ -82,6 +82,16 @@ The binary is at `build/bin/vox`. On macOS, a `.app` bundle is created at `build
 | Toggle | Press once to start, press again to stop |
 | Hands-free | Double-tap hotkey → speaks until timeout or double-tap again |
 
+### CLI Transcribe
+
+`vox transcribe` transcribes audio files with LLM cleanup enabled by default (same pipeline as the desktop app). Use `--raw` to get the unprocessed STT output.
+
+```bash
+vox transcribe -f recording.wav            # transcribed + cleaned
+vox transcribe -f recording.wav --raw      # raw STT output only
+vox transcribe -f recording.wav -json      # JSON output
+```
+
 ## Configuration
 
 All settings are manageable through the built-in UI. Config files are stored in `~/.config/vox/` (Linux/macOS) or `%APPDATA%\vox\` (Windows):
@@ -153,6 +163,18 @@ frontend/
 - **STT:** OpenAI Whisper API or local Whisper-compatible server
 - **LLM:** OpenAI GPT-4o-mini / Ollama / none
 
+## Versioning
+
+**Pre-1.0** (current):
+
+| Bump | Meaning |
+|------|---------|
+| Patch (`0.x.Y`) | Bugfixes — no user-visible behavior changes |
+| Minor (`0.X.y`) | New features, new tools, backwards-compatible changes |
+| Major (`X.y.z`) | Breaking changes (config format, CLI interface, storage format) |
+
+**Post-1.0:** Strict [Semantic Versioning](https://semver.org) (MAJOR.MINOR.PATCH).
+
 ## Manual Smoke Test
 
 Automated tests cover pure helpers, config parsing, history, cleanup prompt assembly, and STT HTTP boundaries. Everything below requires a running binary, real hardware, or OS integration and must be smoke-tested by hand before a release.
@@ -174,6 +196,7 @@ Run through this list on each target platform. Items marked _(platform)_ apply o
 - [ ] Toggle: press once to start, press again to stop; text is injected after stop.
 - [ ] Hands-free: double-tap starts continuous mode; double-tap again (or timeout) stops it.
 - [ ] Escape during a recording discards the take — no injection, tray returns to Idle.
+- [ ] _(macOS)_ ESC during recording does **not** leak to the active app (e.g. in a Claude Code shell, the running process is not interrupted). Requires Accessibility permission granted.
 - [ ] Very short hotkey tap (< 300ms) is discarded, not transcribed.
 - [ ] Changing the hotkey in Settings takes effect without a restart.
 
