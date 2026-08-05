@@ -45,10 +45,10 @@ func swayContext() (Context, error) {
 }
 
 type swayNode struct {
-	Name    string     `json:"name"`
-	AppID   string     `json:"app_id"`
-	Focused bool       `json:"focused"`
-	Nodes   []swayNode `json:"nodes"`
+	Name     string     `json:"name"`
+	AppID    string     `json:"app_id"`
+	Focused  bool       `json:"focused"`
+	Nodes    []swayNode `json:"nodes"`
 	Floating []swayNode `json:"floating_nodes"`
 }
 
@@ -166,8 +166,8 @@ func x11Context() (Context, error) {
 			if idx := strings.Index(s, "= "); idx >= 0 {
 				parts := strings.Split(s[idx+2:], ", ")
 				if len(parts) >= 2 {
-					ctx.AppName = strings.Trim(parts[1], `"` + "\n")
-					ctx.AppID = strings.Trim(parts[0], `"` + "\n")
+					ctx.AppName = strings.Trim(parts[1], `"`+"\n")
+					ctx.AppID = strings.Trim(parts[0], `"`+"\n")
 				}
 			}
 		}

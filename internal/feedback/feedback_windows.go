@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	user32Win  = syscall.NewLazyDLL("user32.dll")
+	user32Win   = syscall.NewLazyDLL("user32.dll")
 	messageBeep = user32Win.NewProc("MessageBeep")
 )
 
