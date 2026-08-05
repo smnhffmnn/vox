@@ -42,14 +42,14 @@ func TestLocal_Transcribe_SendsCorrectRequest(t *testing.T) {
 	audioPath := writeDummyAudio(t, "sample.wav")
 
 	var (
-		gotPath          string
-		gotAuth          string
-		gotContentType   string
-		gotFileField     string
-		gotFileContents  []byte
-		gotModel         string
-		gotLanguage      string
-		gotPrompt        string
+		gotPath         string
+		gotAuth         string
+		gotContentType  string
+		gotFileField    string
+		gotFileContents []byte
+		gotModel        string
+		gotLanguage     string
+		gotPrompt       string
 	)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

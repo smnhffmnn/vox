@@ -7,6 +7,59 @@
 import { Create as $Create } from "@wailsio/runtime";
 
 /**
+ * AudioData carries a recording to the frontend as base64, so it can be played
+ * or downloaded from the history view.
+ */
+export class AudioData {
+    /**
+     * Creates a new AudioData instance.
+     * @param {Partial<AudioData>} [$$source = {}] - The source object to create the AudioData.
+     */
+    constructor($$source = {}) {
+        if (!("base64" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["base64"] = "";
+        }
+        if (!("mime_type" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["mime_type"] = "";
+        }
+        if (!("filename" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["filename"] = "";
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {string | undefined}
+             */
+            this["error"] = undefined;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new AudioData instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {AudioData}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new AudioData(/** @type {Partial<AudioData>} */($$parsedSource));
+    }
+}
+
+/**
  * ConfigResponse holds the config for the frontend.
  */
 export class ConfigResponse {
@@ -144,6 +197,13 @@ export class HistoryEntry {
      * @param {Partial<HistoryEntry>} [$$source = {}] - The source object to create the HistoryEntry.
      */
     constructor($$source = {}) {
+        if (!("id" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["id"] = "";
+        }
         if (!("timestamp" in $$source)) {
             /**
              * @member
@@ -193,6 +253,36 @@ export class HistoryEntry {
              */
             this["backend"] = "";
         }
+        if (!("status" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["status"] = "";
+        }
+        if (!("failed_step" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["failed_step"] = "";
+        }
+        if (!("error_message" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["error_message"] = "";
+        }
+        if (!("has_audio" in $$source)) {
+            /**
+             * HasAudio reports whether the recording is still on disk. Audio is kept
+             * for the newest entries only, so this is false for most of the history.
+             * @member
+             * @type {boolean}
+             */
+            this["has_audio"] = false;
+        }
 
         Object.assign(this, $$source);
     }
@@ -205,6 +295,200 @@ export class HistoryEntry {
     static createFrom($$source = {}) {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new HistoryEntry(/** @type {Partial<HistoryEntry>} */($$parsedSource));
+    }
+}
+
+/**
+ * HistoryInfo describes what the history keeps and what that costs on disk.
+ */
+export class HistoryInfo {
+    /**
+     * Creates a new HistoryInfo instance.
+     * @param {Partial<HistoryInfo>} [$$source = {}] - The source object to create the HistoryInfo.
+     */
+    constructor($$source = {}) {
+        if (!("path" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["path"] = "";
+        }
+        if (!("text_kept" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["text_kept"] = 0;
+        }
+        if (!("audio_kept" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["audio_kept"] = 0;
+        }
+        if (!("audio_files" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["audio_files"] = 0;
+        }
+        if (!("audio_bytes" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["audio_bytes"] = 0;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * UsageError is set when the recordings directory could not be read, so the
+             * UI can say "unknown" instead of showing a confident zero.
+             * @member
+             * @type {string | undefined}
+             */
+            this["usage_error"] = undefined;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new HistoryInfo instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {HistoryInfo}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new HistoryInfo(/** @type {Partial<HistoryInfo>} */($$parsedSource));
+    }
+}
+
+/**
+ * LogRecord is a frontend-friendly diagnostic record.
+ */
+export class LogRecord {
+    /**
+     * Creates a new LogRecord instance.
+     * @param {Partial<LogRecord>} [$$source = {}] - The source object to create the LogRecord.
+     */
+    constructor($$source = {}) {
+        if (!("time" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["time"] = "";
+        }
+        if (!("level" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["level"] = "";
+        }
+        if (!("step" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["step"] = "";
+        }
+        if (!("message" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["message"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new LogRecord instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {LogRecord}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new LogRecord(/** @type {Partial<LogRecord>} */($$parsedSource));
+    }
+}
+
+/**
+ * RetryResult reports the outcome of a second transcription attempt.
+ * 
+ * OK covers the transcription only. Delivery to the clipboard is reported
+ * separately, because a recovered text that could not be copied must not look
+ * like a success — the user would try to paste nothing.
+ */
+export class RetryResult {
+    /**
+     * Creates a new RetryResult instance.
+     * @param {Partial<RetryResult>} [$$source = {}] - The source object to create the RetryResult.
+     */
+    constructor($$source = {}) {
+        if (!("ok" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["ok"] = false;
+        }
+        if (!("delivered" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["delivered"] = false;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {string | undefined}
+             */
+            this["error"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {string | undefined}
+             */
+            this["delivery_error"] = undefined;
+        }
+        if (!("persisted" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["persisted"] = false;
+        }
+        if (!("entry" in $$source)) {
+            /**
+             * @member
+             * @type {HistoryEntry}
+             */
+            this["entry"] = (new HistoryEntry());
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new RetryResult instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {RetryResult}
+     */
+    static createFrom($$source = {}) {
+        const $$createField5_0 = $$createType0;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("entry" in $$parsedSource) {
+            $$parsedSource["entry"] = $$createField5_0($$parsedSource["entry"]);
+        }
+        return new RetryResult(/** @type {Partial<RetryResult>} */($$parsedSource));
     }
 }
 
@@ -311,3 +595,6 @@ export class TestResult {
         return new TestResult(/** @type {Partial<TestResult>} */($$parsedSource));
     }
 }
+
+// Private type creation functions
+const $$createType0 = HistoryEntry.createFrom;

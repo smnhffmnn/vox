@@ -39,13 +39,12 @@ const char* getDefaultInputDeviceName(void) {
 */
 import "C"
 import (
-	"fmt"
-	"os"
+	"github.com/smnhffmnn/vox/internal/logbuf"
 )
 
 func init() {
 	name := C.GoString(C.getDefaultInputDeviceName())
 	if name != "" {
-		fmt.Fprintf(os.Stderr, "vox: default input device: %s\n", name)
+		logbuf.Infof(logbuf.StepRecording, "default input device: %s", name)
 	}
 }

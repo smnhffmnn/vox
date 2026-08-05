@@ -1,7 +1,7 @@
 import { writable } from 'svelte/store'
 import type { StatusResponse, ConfigResponse } from './api'
 
-export type View = 'status' | 'settings' | 'backends' | 'dictionary' | 'snippets' | 'history' | 'about'
+export type View = 'status' | 'settings' | 'backends' | 'dictionary' | 'snippets' | 'history' | 'logs' | 'about'
 
 export const activeView = writable<View>('status')
 export const status = writable<StatusResponse | null>(null)

@@ -14,21 +14,21 @@ import (
 
 // Linux input event constants
 const (
-	evKey       = 0x01
-	keyPress    = 1
-	keyRelease  = 0
+	evKey          = 0x01
+	keyPress       = 1
+	keyRelease     = 0
 	inputEventSize = 24 // sizeof(struct input_event) on 64-bit Linux
 
 	// Key codes
-	keyRightAlt  = 100
-	keyF13       = 183
-	keyF14       = 184
-	keyF15       = 185
-	keyF16       = 186
-	keyF17       = 187
-	keyF18       = 188
-	keyF19       = 189
-	keyF20       = 190
+	keyRightAlt = 100
+	keyF13      = 183
+	keyF14      = 184
+	keyF15      = 185
+	keyF16      = 186
+	keyF17      = 187
+	keyF18      = 188
+	keyF19      = 189
+	keyF20      = 190
 )
 
 // inputEvent matches struct input_event from linux/input.h

@@ -8,8 +8,12 @@ export {
 };
 
 export {
+    AudioData,
     ConfigResponse,
     HistoryEntry,
+    HistoryInfo,
+    LogRecord,
+    RetryResult,
     StatusResponse,
     TestResult
 } from "./models.js";

@@ -36,6 +36,8 @@ func TestDefaultConfig(t *testing.T) {
 		{"Notifications", cfg.Notifications, true},
 		{"AudioFeedback", cfg.AudioFeedback, true},
 		{"ShowOverlay", cfg.ShowOverlay, true},
+		{"HistorySize", cfg.HistorySize, 1000},
+		{"AudioKeep", cfg.AudioKeep, 30},
 		{"STTBackend", cfg.STTBackend, "openai"},
 		{"LLMBackend", cfg.LLMBackend, "openai"},
 		{"STTURL empty", cfg.STTURL, ""},
@@ -124,6 +126,8 @@ doubletap_window: 250
 notifications: false
 audio_feedback: false
 show_overlay: false
+history_size: 250
+audio_keep: 5
 stt_backend: local
 stt_url: http://localhost:9000
 stt_model: gpt-4o-transcribe
@@ -163,6 +167,12 @@ llm_model: qwen2.5:7b
 	}
 	if cfg.ShowOverlay {
 		t.Errorf("ShowOverlay = %v, want false", cfg.ShowOverlay)
+	}
+	if cfg.HistorySize != 250 {
+		t.Errorf("HistorySize = %d", cfg.HistorySize)
+	}
+	if cfg.AudioKeep != 5 {
+		t.Errorf("AudioKeep = %d", cfg.AudioKeep)
 	}
 	if cfg.STTBackend != "local" {
 		t.Errorf("STTBackend = %q", cfg.STTBackend)
@@ -337,6 +347,8 @@ func TestSaveLoad_Roundtrip(t *testing.T) {
 	original.Notifications = false
 	original.AudioFeedback = false
 	original.ShowOverlay = false
+	original.HistorySize = 42
+	original.AudioKeep = 7
 	original.STTBackend = "local"
 	original.STTURL = "http://stt.local"
 	original.STTModel = "gpt-4o-mini-transcribe"
@@ -355,8 +367,8 @@ func TestSaveLoad_Roundtrip(t *testing.T) {
 
 	// Compare field by field; mu cannot be compared with ==.
 	checks := []struct {
-		name       string
-		got, want  any
+		name      string
+		got, want any
 	}{
 		{"Language", loaded.Language, original.Language},
 		{"Output", loaded.Output, original.Output},
@@ -368,6 +380,8 @@ func TestSaveLoad_Roundtrip(t *testing.T) {
 		{"Notifications", loaded.Notifications, original.Notifications},
 		{"AudioFeedback", loaded.AudioFeedback, original.AudioFeedback},
 		{"ShowOverlay", loaded.ShowOverlay, original.ShowOverlay},
+		{"HistorySize", loaded.HistorySize, original.HistorySize},
+		{"AudioKeep", loaded.AudioKeep, original.AudioKeep},
 		{"STTBackend", loaded.STTBackend, original.STTBackend},
 		{"STTURL", loaded.STTURL, original.STTURL},
 		{"STTModel", loaded.STTModel, original.STTModel},
@@ -446,5 +460,36 @@ func TestConfigDir_UsesUserHome(t *testing.T) {
 	want := filepath.Join(home, ".config", "vox")
 	if dir != want {
 		t.Errorf("ConfigDir() = %q, want %q", dir, want)
+	}
+}
+
+func TestParseConfig_RetentionEdgeCases(t *testing.T) {
+	// audio_keep: 0 is a real choice — keep no recordings at all.
+	cfg := DefaultConfig()
+	parseConfig("audio_keep: 0\n", cfg)
+	if cfg.AudioKeep != 0 {
+		t.Errorf("audio_keep 0 must be honored, got %d", cfg.AudioKeep)
+	}
+
+	// history_size: 0 would empty the history on every write, so it is ignored.
+	cfg = DefaultConfig()
+	parseConfig("history_size: 0\n", cfg)
+	if cfg.HistorySize != 1000 {
+		t.Errorf("history_size 0 must fall back to the default, got %d", cfg.HistorySize)
+	}
+
+	// Negative and non-numeric values keep the defaults.
+	cfg = DefaultConfig()
+	parseConfig("history_size: -5\naudio_keep: -1\n", cfg)
+	if cfg.HistorySize != 1000 || cfg.AudioKeep != 30 {
+		t.Errorf("negative values must be ignored, got history_size=%d audio_keep=%d",
+			cfg.HistorySize, cfg.AudioKeep)
+	}
+
+	cfg = DefaultConfig()
+	parseConfig("history_size: many\naudio_keep: lots\n", cfg)
+	if cfg.HistorySize != 1000 || cfg.AudioKeep != 30 {
+		t.Errorf("non-numeric values must be ignored, got history_size=%d audio_keep=%d",
+			cfg.HistorySize, cfg.AudioKeep)
 	}
 }

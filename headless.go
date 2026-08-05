@@ -30,9 +30,9 @@ func runDesktop() {
 // headlessUI implements UIBridge as no-ops.
 type headlessUI struct{}
 
-func (h *headlessUI) SetTrayIcon(icon []byte)       {}
-func (h *headlessUI) SetTrayLabel(label string)      {}
-func (h *headlessUI) ShowOverlay(x, y int)           {}
-func (h *headlessUI) HideOverlay()                   {}
+func (h *headlessUI) SetTrayIcon(icon []byte)         {}
+func (h *headlessUI) SetTrayLabel(label string)       {}
+func (h *headlessUI) ShowOverlay(x, y int)            {}
+func (h *headlessUI) HideOverlay()                    {}
 func (h *headlessUI) EmitEvent(name string, data any) {}
-func (h *headlessUI) ShowWindow()                    {}
+func (h *headlessUI) ShowWindow()                     {}
