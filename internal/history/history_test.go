@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -970,16 +971,20 @@ func TestStoreAudio_MovesFileOwnerOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat stored: %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Errorf("recording mode = %o, want 600 — recordings are the user's voice", perm)
-	}
-
 	dirInfo, err := os.Stat(filepath.Dir(path))
 	if err != nil {
 		t.Fatalf("stat dir: %v", err)
 	}
-	if perm := dirInfo.Mode().Perm(); perm != 0o700 {
-		t.Errorf("recordings dir mode = %o, want 700", perm)
+	// Windows does not represent Unix permission bits — os.Stat reports 0666/0777
+	// there regardless of the mode passed to OpenFile/MkdirAll — so the owner-only
+	// guarantee only holds, and is only checkable, on Unix.
+	if runtime.GOOS != "windows" {
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Errorf("recording mode = %o, want 600 — recordings are the user's voice", perm)
+		}
+		if perm := dirInfo.Mode().Perm(); perm != 0o700 {
+			t.Errorf("recordings dir mode = %o, want 700", perm)
+		}
 	}
 }
 
