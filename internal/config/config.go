@@ -11,17 +11,21 @@ import (
 
 // Config holds the application configuration.
 type Config struct {
-	mu            sync.RWMutex
-	Language      string
-	Output        string
-	Raw           bool
-	Hotkey        string
+	mu               sync.RWMutex
+	Language         string
+	Output           string
+	Raw              bool
+	Hotkey           string
 	Mode             string // "hold" or "toggle"
 	HandsfreeTimeout int    // Hands-free timeout in seconds (0 = no limit)
 	DoubletapWindow  int    // Double-tap detection window in milliseconds
 	Notifications    bool
 	AudioFeedback    bool
 	ShowOverlay      bool
+
+	// Retention
+	HistorySize int // Number of history entries whose text is kept
+	AudioKeep   int // Number of newest entries whose recording is kept on disk
 
 	// Backend
 	STTBackend string // "openai" (default) or "local"
@@ -44,18 +48,20 @@ func (c *Config) RUnlock() { c.mu.RUnlock() }
 // DefaultConfig returns a Config with default values.
 func DefaultConfig() *Config {
 	return &Config{
-		Language:      "de",
-		Output:        "wtype",
-		Raw:           false,
-		Hotkey:        "right_option",
+		Language:         "de",
+		Output:           "wtype",
+		Raw:              false,
+		Hotkey:           "right_option",
 		Mode:             "hold",
 		HandsfreeTimeout: 360,
 		DoubletapWindow:  400,
 		Notifications:    true,
-		AudioFeedback: true,
-		ShowOverlay:   true,
-		STTBackend:    "openai",
-		LLMBackend:    "openai",
+		AudioFeedback:    true,
+		ShowOverlay:      true,
+		HistorySize:      1000,
+		AudioKeep:        30,
+		STTBackend:       "openai",
+		LLMBackend:       "openai",
 	}
 }
 
@@ -113,6 +119,9 @@ func (cfg *Config) Save() error {
 	b.WriteString(fmt.Sprintf("notifications: %v\n", cfg.Notifications))
 	b.WriteString(fmt.Sprintf("audio_feedback: %v\n", cfg.AudioFeedback))
 	b.WriteString(fmt.Sprintf("show_overlay: %v\n", cfg.ShowOverlay))
+	b.WriteString("\n# Retention\n")
+	b.WriteString(fmt.Sprintf("history_size: %d\n", cfg.HistorySize))
+	b.WriteString(fmt.Sprintf("audio_keep: %d\n", cfg.AudioKeep))
 	b.WriteString("\n# Backend\n")
 	b.WriteString(fmt.Sprintf("stt_backend: %s\n", cfg.STTBackend))
 	if cfg.STTURL != "" {
@@ -169,6 +178,15 @@ func parseConfig(data string, cfg *Config) {
 			cfg.AudioFeedback = value == "true"
 		case "show_overlay":
 			cfg.ShowOverlay = value == "true"
+		case "history_size":
+			if v, err := strconv.Atoi(value); err == nil && v > 0 {
+				cfg.HistorySize = v
+			}
+		case "audio_keep":
+			// 0 is meaningful: keep no audio at all.
+			if v, err := strconv.Atoi(value); err == nil && v >= 0 {
+				cfg.AudioKeep = v
+			}
 		case "stt_backend":
 			cfg.STTBackend = value
 		case "stt_url":

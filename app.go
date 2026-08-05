@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -22,13 +23,20 @@ import (
 	"github.com/smnhffmnn/vox/internal/hotkey"
 	"github.com/smnhffmnn/vox/internal/inject"
 	"github.com/smnhffmnn/vox/internal/keychain"
+	"github.com/smnhffmnn/vox/internal/logbuf"
 	"github.com/smnhffmnn/vox/internal/notify"
+	"github.com/smnhffmnn/vox/internal/openpath"
 	"github.com/smnhffmnn/vox/internal/permissions"
 	"github.com/smnhffmnn/vox/internal/stt"
 	"github.com/smnhffmnn/vox/internal/windowctx"
 )
 
 const insufficientCreditsMessage = "OpenAI-Guthaben aufgebraucht — API-Key oder Plan prüfen"
+
+// errNoSpeech marks a transcription that produced nothing usable. The pipeline
+// treats it specially: the recording is not worth a retention slot, because
+// transcribing silence again yields the same result.
+var errNoSpeech = errors.New("no speech detected")
 
 var version = "dev"
 
@@ -92,20 +100,50 @@ func NewApp() *App {
 		state:   "idle",
 		started: time.Now(),
 		cfg:     cfg,
-		hist:    history.NewHistory(1000),
+		hist:    history.NewHistory(cfg.HistorySize, cfg.AudioKeep),
 	}
 }
 
 // Start initializes the app (hotkey listener, dynamic data).
 // Called by the desktop lifecycle (ServiceStartup) or headless entry.
 func (a *App) Start() {
+	// Push every error-level diagnostic to the UI, so a failure is visible
+	// without opening a terminal.
+	logbuf.SetSink(func(rec logbuf.Record) {
+		if rec.Level != logbuf.LevelError || a.ui == nil {
+			return
+		}
+		a.ui.EmitEvent("log-error", map[string]string{
+			"time":    rec.Time.Format(time.RFC3339),
+			"level":   rec.Level,
+			"step":    rec.Step,
+			"message": rec.Message,
+		})
+	})
+
+	if err := a.hist.LoadError(); err != nil {
+		logbuf.Errorf(logbuf.StepHistory, "history read incompletely — it will not be rewritten, so nothing is lost: %v", err)
+	}
+
+	// Any attempt still marked pending belongs to a process that is gone.
+	if n := a.hist.AdoptPending("interrupted before the transcription finished"); n > 0 {
+		logbuf.Warnf(logbuf.StepHistory, "%d interrupted attempt(s) recovered — the recordings are kept and can be transcribed again", n)
+	}
+
+	// Safe to do here: nothing is being transcribed yet, so any recording
+	// without a history entry is a leftover from a crash.
+	a.hist.CleanOrphans()
+
 	a.reloadDynamicData()
 	a.startHotkeyListener()
-	fmt.Fprintln(os.Stderr, "vox: service started")
+	logbuf.Infof(logbuf.StepApp, "service started")
 }
 
 // Shutdown cleans up resources.
 func (a *App) Shutdown() {
+	// Drop the sink before the UI goes away, so nothing emits into a torn-down
+	// Wails app.
+	logbuf.SetSink(nil)
 	if a.listener != nil {
 		a.listener.Close()
 	}
@@ -316,6 +354,7 @@ func (a *App) SaveSnippets(snippets []config.Snippet) error {
 
 // HistoryEntry is a frontend-friendly history entry.
 type HistoryEntry struct {
+	ID          string  `json:"id"`
 	Timestamp   string  `json:"timestamp"`
 	Language    string  `json:"language"`
 	RawText     string  `json:"raw_text"`
@@ -323,24 +362,303 @@ type HistoryEntry struct {
 	AppContext  string  `json:"app_context"`
 	DurationSec float64 `json:"duration_seconds"`
 	Backend     string  `json:"backend"`
+
+	Status       string `json:"status"`
+	FailedStep   string `json:"failed_step"`
+	ErrorMessage string `json:"error_message"`
+
+	// HasAudio reports whether the recording is still on disk. Audio is kept
+	// for the newest entries only, so this is false for most of the history.
+	HasAudio bool `json:"has_audio"`
 }
 
-// GetHistory returns transcription history.
+// GetHistory returns the dictation history, newest first.
 func (a *App) GetHistory() []HistoryEntry {
 	entries := a.hist.Entries()
+	// One directory read for the whole list instead of a stat per entry.
+	present := a.hist.StoredAudio()
+
 	result := make([]HistoryEntry, len(entries))
 	for i, e := range entries {
-		result[i] = HistoryEntry{
-			Timestamp:   e.Timestamp.Format(time.RFC3339),
-			Language:    e.Language,
-			RawText:     e.RawText,
-			CleanedText: e.CleanedText,
-			AppContext:  e.AppContext,
-			DurationSec: e.DurationSec,
-			Backend:     e.Backend,
-		}
+		result[i] = toHistoryEntry(e, present)
 	}
 	return result
+}
+
+// toHistoryEntry converts a stored entry for the frontend. present is the set of
+// recordings on disk, as returned by history.StoredAudio.
+func toHistoryEntry(e history.Entry, present map[string]struct{}) HistoryEntry {
+	// An empty status comes from an entry written before failures were recorded.
+	status := e.Status
+	if status == "" {
+		status = history.StatusOK
+	}
+	return HistoryEntry{
+		ID:           e.ID,
+		Timestamp:    e.Timestamp.Format(time.RFC3339),
+		Language:     e.Language,
+		RawText:      e.RawText,
+		CleanedText:  e.CleanedText,
+		AppContext:   e.AppContext,
+		DurationSec:  e.DurationSec,
+		Backend:      e.Backend,
+		Status:       status,
+		FailedStep:   e.FailedStep,
+		ErrorMessage: e.ErrorMessage,
+		HasAudio:     history.HasAudio(e, present),
+	}
+}
+
+// HistoryInfo describes what the history keeps and what that costs on disk.
+type HistoryInfo struct {
+	Path       string `json:"path"`
+	TextKept   int    `json:"text_kept"`
+	AudioKept  int    `json:"audio_kept"`
+	AudioFiles int    `json:"audio_files"`
+	AudioBytes int64  `json:"audio_bytes"`
+	// UsageError is set when the recordings directory could not be read, so the
+	// UI can say "unknown" instead of showing a confident zero.
+	UsageError string `json:"usage_error,omitempty"`
+}
+
+// GetHistoryInfo returns the retention settings and current disk usage.
+func (a *App) GetHistoryInfo() HistoryInfo {
+	info := HistoryInfo{
+		Path:      a.hist.Path(),
+		TextKept:  a.hist.MaxSize(),
+		AudioKept: a.hist.AudioKeep(),
+	}
+	files, bytes, err := a.hist.AudioUsage()
+	if err != nil {
+		logbuf.Warnf(logbuf.StepHistory, "reading the recordings directory: %v", err)
+		info.UsageError = err.Error()
+		return info
+	}
+	info.AudioFiles = files
+	info.AudioBytes = bytes
+	return info
+}
+
+// RetryResult reports the outcome of a second transcription attempt.
+//
+// OK covers the transcription only. Delivery to the clipboard is reported
+// separately, because a recovered text that could not be copied must not look
+// like a success — the user would try to paste nothing.
+type RetryResult struct {
+	OK            bool         `json:"ok"`
+	Delivered     bool         `json:"delivered"`
+	Error         string       `json:"error,omitempty"`
+	DeliveryError string       `json:"delivery_error,omitempty"`
+	Persisted     bool         `json:"persisted"`
+	Entry         HistoryEntry `json:"entry"`
+}
+
+// RetryEntry transcribes a stored recording again and updates its history entry.
+// When toClipboard is true the recovered text is also copied.
+//
+// Delivery is deliberately limited to the clipboard: a retry is triggered from
+// the vox window, so that window holds the keyboard focus and typing the text
+// at "the cursor" would type it into vox itself.
+//
+// This is the recovery path for a failed attempt — the spoken words are read
+// back from the kept recording instead of being spoken again.
+func (a *App) RetryEntry(id string, toClipboard bool) RetryResult {
+	entry, ok := a.hist.Get(id)
+	if !ok {
+		return RetryResult{Error: "history entry not found"}
+	}
+
+	// Hold the recording for the duration: a dictation finishing meanwhile
+	// could otherwise prune exactly this file mid-transcription.
+	release := a.hist.HoldAudio(entry)
+	defer release()
+
+	audioPath := a.hist.AudioPath(entry)
+	if audioPath == "" {
+		return RetryResult{Error: fmt.Sprintf("recording no longer available — audio is kept for the newest %d entries", a.hist.AudioKeep())}
+	}
+
+	// Reuse the context the recording was made in, so the cleanup tone matches
+	// the original situation rather than the vox window. The tone is derived
+	// from the app name and the window title, so both are restored.
+	var wctx *windowctx.Context
+	if entry.AppContext != "" || entry.WindowTitle != "" {
+		wctx = &windowctx.Context{AppName: entry.AppContext, WindowTitle: entry.WindowTitle}
+	}
+
+	present := a.hist.StoredAudio()
+
+	tr, err := a.transcribeAndCleanup(audioPath, wctx)
+	if err != nil {
+		step := stepOf(err, logbuf.StepSTT)
+		logbuf.Errorf(step, "retry failed: %v", err)
+		if errors.Is(err, apierr.ErrInsufficientCredits) {
+			a.notifyInsufficientCredits()
+		}
+
+		// Do not demote an entry that already holds a usable transcription:
+		// re-transcribing a good entry and hitting a network blip must not turn
+		// it into a failure.
+		result := RetryResult{Error: err.Error(), Entry: toHistoryEntry(entry, present)}
+		if entry.HasText() {
+			return result
+		}
+
+		entry.Status = history.StatusFailed
+		entry.FailedStep = step
+		entry.ErrorMessage = storableError(err)
+		if _, uerr := a.hist.Update(id, func(e *history.Entry) {
+			e.Status = entry.Status
+			e.FailedStep = entry.FailedStep
+			e.ErrorMessage = entry.ErrorMessage
+		}); uerr != nil {
+			logbuf.Errorf(logbuf.StepHistory, "could not record the retry failure on entry %s: %v", id, uerr)
+		}
+		result.Entry = toHistoryEntry(entry, present)
+		return result
+	}
+	if tr.cleanupCreditErr {
+		a.notifyInsufficientCredits()
+	}
+
+	entry.RawText = tr.raw
+	entry.CleanedText = tr.cleaned
+	entry.Status = history.StatusOK
+	entry.FailedStep = ""
+	entry.ErrorMessage = ""
+
+	res := RetryResult{OK: true, Persisted: true, Entry: toHistoryEntry(entry, present)}
+
+	if _, uerr := a.hist.Update(id, func(e *history.Entry) {
+		e.RawText = entry.RawText
+		e.CleanedText = entry.CleanedText
+		e.Status = entry.Status
+		e.FailedStep = ""
+		e.ErrorMessage = ""
+	}); uerr != nil {
+		if errors.Is(uerr, history.ErrNotFound) {
+			return RetryResult{Error: "history entry disappeared during the retry"}
+		}
+		// The text is recovered but only in memory — say so rather than
+		// reporting a clean success.
+		logbuf.Errorf(logbuf.StepHistory, "could not save the retry result for entry %s: %v", id, uerr)
+		res.Persisted = false
+		res.Error = fmt.Sprintf("recovered, but saving to the history failed: %v", uerr)
+	}
+	logbuf.Infof(logbuf.StepSTT, "retry succeeded for entry %s", id)
+
+	if toClipboard {
+		if err := inject.Inject(inject.Clipboard, tr.cleaned); err != nil {
+			logbuf.Errorf(logbuf.StepInsert, "clipboard after retry: %v", err)
+			res.DeliveryError = err.Error()
+			return res
+		}
+		res.Delivered = true
+	}
+
+	return res
+}
+
+// maxInlineAudioBytes bounds what GetEntryAudio will hand to the webview. At
+// ~1.9 MB per minute this is roughly half an hour of dictation.
+const maxInlineAudioBytes = 64 << 20
+
+// AudioData carries a recording to the frontend as base64, so it can be played
+// or downloaded from the history view.
+type AudioData struct {
+	Base64   string `json:"base64"`
+	MIMEType string `json:"mime_type"`
+	Filename string `json:"filename"`
+	Error    string `json:"error,omitempty"`
+}
+
+// GetEntryAudio returns the stored recording for an entry.
+func (a *App) GetEntryAudio(id string) AudioData {
+	entry, ok := a.hist.Get(id)
+	if !ok {
+		return AudioData{Error: "history entry not found"}
+	}
+	path := a.hist.AudioPath(entry)
+	if path == "" {
+		return AudioData{Error: "recording no longer available"}
+	}
+
+	// The recording crosses the bridge base64-encoded and becomes a data: URL,
+	// so it exists several times over in memory. Refuse the outliers instead of
+	// letting the webview choke, and point at the way that always works.
+	if info, err := os.Stat(path); err == nil && info.Size() > maxInlineAudioBytes {
+		return AudioData{Error: fmt.Sprintf(
+			"recording is %d MB — too large to load in the app; use Reveal to open it in the file manager",
+			info.Size()/(1024*1024))}
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		logbuf.Errorf(logbuf.StepHistory, "reading recording: %v", err)
+		return AudioData{Error: err.Error()}
+	}
+	return AudioData{
+		Base64:   base64.StdEncoding.EncodeToString(data),
+		MIMEType: "audio/wav",
+		Filename: fmt.Sprintf("vox-%s.wav", entry.Timestamp.Format("2006-01-02-150405")),
+	}
+}
+
+// RevealEntryAudio shows a stored recording in the file manager.
+func (a *App) RevealEntryAudio(id string) error {
+	entry, ok := a.hist.Get(id)
+	if !ok {
+		return fmt.Errorf("history entry not found")
+	}
+	path := a.hist.AudioPath(entry)
+	if path == "" {
+		return fmt.Errorf("recording no longer available")
+	}
+	return openpath.Reveal(path)
+}
+
+// RevealHistoryFile shows history.jsonl in the file manager. Revealing rather
+// than opening it: .jsonl usually has no registered handler, so "open" would
+// either fail or launch something unexpected.
+func (a *App) RevealHistoryFile() error {
+	path := a.hist.Path()
+	if path == "" {
+		return fmt.Errorf("no history file")
+	}
+	return openpath.Reveal(path)
+}
+
+// CopyToClipboard puts text on the system clipboard.
+func (a *App) CopyToClipboard(text string) error {
+	return inject.Inject(inject.Clipboard, text)
+}
+
+// LogRecord is a frontend-friendly diagnostic record.
+type LogRecord struct {
+	Time    string `json:"time"`
+	Level   string `json:"level"`
+	Step    string `json:"step"`
+	Message string `json:"message"`
+}
+
+// GetLogs returns the diagnostic log, newest first.
+func (a *App) GetLogs() []LogRecord {
+	records := logbuf.Records()
+	out := make([]LogRecord, len(records))
+	for i, r := range records {
+		out[i] = LogRecord{
+			Time:    r.Time.Format(time.RFC3339),
+			Level:   r.Level,
+			Step:    r.Step,
+			Message: r.Message,
+		}
+	}
+	return out
+}
+
+// ClearLogs empties the diagnostic log.
+func (a *App) ClearLogs() {
+	logbuf.Reset()
 }
 
 // TestResult holds the result of a backend test.
@@ -498,7 +816,7 @@ func (a *App) startHotkeyListener() {
 	a.listener = hotkey.New(key)
 	go func() {
 		if err := a.listener.Listen(a.onPress, a.onRelease); err != nil {
-			fmt.Fprintf(os.Stderr, "vox: hotkey listener: %v\n", err)
+			logbuf.Errorf(logbuf.StepApp, "hotkey listener: %v", err)
 		}
 	}()
 }
@@ -554,7 +872,7 @@ func (a *App) startRec() {
 	}
 	rec, err := audio.Start()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "vox: recording start: %v\n", err)
+		logbuf.Errorf(logbuf.StepRecording, "recording start: %v", err)
 		a.setState("idle")
 		return
 	}
@@ -570,7 +888,7 @@ func (a *App) startRec() {
 		}
 	})
 	if !canConsume {
-		fmt.Fprintf(os.Stderr, "vox: ESC monitor running in degraded mode (listen-only) — grant Accessibility permission to prevent ESC from leaking to the active app\n")
+		logbuf.Warnf(logbuf.StepRecording, "ESC monitor running in degraded mode (listen-only) — grant Accessibility permission to prevent ESC from leaking to the active app")
 	}
 }
 
@@ -596,8 +914,12 @@ func (a *App) stopAndDiscard() {
 		a.recording = nil
 		a.isRecording = false
 		go func() {
+			// Discarding on purpose, so the file goes either way — Stop returns
+			// no path on failure, but may already have written the file.
 			if f, _, err := r.Stop(); err == nil {
 				os.Remove(f)
+			} else if leftover := r.File(); leftover != "" {
+				os.Remove(leftover)
 			}
 		}()
 	}
@@ -609,7 +931,7 @@ func (a *App) startHandsfree() {
 	if !a.isRecording {
 		rec, err := audio.Start()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "vox: recording start: %v\n", err)
+			logbuf.Errorf(logbuf.StepRecording, "recording start: %v", err)
 			a.setState("idle")
 			return
 		}
@@ -632,7 +954,7 @@ func (a *App) startHandsfree() {
 		}
 	})
 	if !canConsume {
-		fmt.Fprintf(os.Stderr, "vox: ESC monitor running in degraded mode (listen-only) — grant Accessibility permission to prevent ESC from leaking to the active app\n")
+		logbuf.Warnf(logbuf.StepRecording, "ESC monitor running in degraded mode (listen-only) — grant Accessibility permission to prevent ESC from leaking to the active app")
 	}
 	a.handsfreeDone = make(chan struct{})
 	hfTimeout := a.getHandsfreeTimeout()
@@ -796,60 +1118,139 @@ func (a *App) onRelease() {
 	a.stopAndProcess()
 }
 
+// handleStopAndProcess runs everything after the recording stopped: keep the
+// audio, transcribe, clean up, deliver the text.
+//
+// The recording is moved out of the temp directory before the first fallible
+// step, and every outcome — success or failure — is written to the history
+// with a reference to it. That is what makes a second attempt possible without
+// speaking again.
 func (a *App) handleStopAndProcess(rec *audio.Recording, gen uint64) {
-	audioFile, duration, err := rec.Stop()
+	tmpAudio, duration, err := rec.Stop()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "vox: recording stop: %v\n", err)
-		if a.recordingGen.Load() == gen {
-			a.setState("idle")
+		logbuf.Errorf(logbuf.StepRecording, "recording stop: %v", err)
+		// Stop returns no path on failure, but writeWAV may already have created
+		// the file — clean it up via the recording's own path.
+		if leftover := rec.File(); leftover != "" {
+			os.Remove(leftover)
 		}
+		// There is no audio to keep here, but the attempt is still recorded so
+		// the failure is visible instead of silent. The id is assigned up front
+		// so the event below can address the stored entry.
+		failed := history.Entry{
+			ID:           history.NewID(),
+			Timestamp:    time.Now(),
+			Status:       history.StatusFailed,
+			FailedStep:   logbuf.StepRecording,
+			ErrorMessage: storableError(err),
+		}
+		a.addEntry(failed)
+		a.emitAttemptFailed(failed)
+		a.settleState(gen)
 		return
 	}
-	defer os.Remove(audioFile)
 
 	var wctx *windowctx.Context
 	if w, err := windowctx.GetContext(); err == nil {
 		wctx = &w
 	}
-
-	tr, err := a.transcribeAndCleanup(audioFile, wctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "vox: %v\n", err)
-		if errors.Is(err, apierr.ErrInsufficientCredits) {
-			a.notifyInsufficientCredits()
-		}
-		if a.recordingGen.Load() == gen {
-			a.setState("idle")
-		}
-		return
-	}
-	if tr.cleanupCreditErr {
-		a.notifyInsufficientCredits()
-	}
-
-	appCtx := ""
+	appCtx, winTitle := "", ""
 	if wctx != nil {
-		appCtx = wctx.AppName
+		appCtx, winTitle = wctx.AppName, wctx.WindowTitle
 	}
+
 	a.cfg.RLock()
 	sttBackend := a.cfg.STTBackend
 	lang := a.cfg.Language
 	output := a.cfg.Output
 	a.cfg.RUnlock()
 
-	a.hist.Add(history.Entry{
+	entryID := history.NewID()
+	audioPath, audioName := tmpAudio, ""
+	keepTemp := false
+
+	if a.hist.AudioKeep() == 0 {
+		// The user asked for no recordings on disk, so the file stays in the
+		// temp directory and is removed below.
+		defer os.Remove(tmpAudio)
+	} else if name, stored, err := a.hist.StoreAudio(entryID, tmpAudio); err != nil {
+		// Raised to error level on purpose: this is the one case where a retry
+		// will not be possible, so the user should see it.
+		logbuf.Errorf(logbuf.StepRecording, "cannot keep the recording: %v — a retry will not be possible; the temporary file is at %s", err, tmpAudio)
+		keepTemp = true
+	} else {
+		audioName, audioPath = name, stored
+	}
+
+	entry := history.Entry{
+		ID:          entryID,
 		Timestamp:   time.Now(),
 		Language:    lang,
-		RawText:     tr.raw,
-		CleanedText: tr.cleaned,
 		AppContext:  appCtx,
+		WindowTitle: winTitle,
 		DurationSec: duration.Seconds(),
 		Backend:     sttBackend,
-	})
+		AudioFile:   audioName,
+		Status:      history.StatusPending,
+	}
+
+	// Store the attempt before transcribing. Transcription can take minutes, and
+	// until an entry references the recording it is invisible in the history and
+	// would be swept up as an orphan after a crash.
+	a.addEntry(entry)
+
+	tr, err := a.transcribeAndCleanup(audioPath, wctx)
+	if err != nil {
+		step := stepOf(err, logbuf.StepSTT)
+		logbuf.Errorf(step, "%v", err)
+		if errors.Is(err, apierr.ErrInsufficientCredits) {
+			a.notifyInsufficientCredits()
+		}
+		entry.Status = history.StatusFailed
+		entry.FailedStep = step
+		entry.ErrorMessage = storableError(err)
+		a.updateEntry(&entry)
+
+		// Silence is not worth a retention slot: transcribing it again yields
+		// the same result, and keeping it would evict the audio of a failure
+		// that is actually worth retrying.
+		if errors.Is(err, errNoSpeech) && audioName != "" {
+			a.hist.DropAudio(entry.ID)
+			entry.AudioFile = ""
+		}
+
+		a.emitAttemptFailed(entry)
+		a.settleState(gen)
+		return
+	}
+	if tr.cleanupCreditErr {
+		a.notifyInsufficientCredits()
+	}
+
+	entry.RawText = tr.raw
+	entry.CleanedText = tr.cleaned
+	entry.Status = history.StatusOK
+
+	// Save before delivering: once the text is on disk it survives a failure or
+	// a crash in the injection step below.
+	a.updateEntry(&entry)
+
+	if keepTemp {
+		// The attempt succeeded, so the unpersisted recording is no longer
+		// needed as a fallback.
+		os.Remove(tmpAudio)
+	}
 
 	method := inject.ParseMethod(output)
-	if err := inject.Inject(method, tr.cleaned); err != nil {
-		fmt.Fprintf(os.Stderr, "vox: output: %v\n", err)
+	if injErr := inject.Inject(method, tr.cleaned); injErr != nil {
+		logbuf.Errorf(logbuf.StepInsert, "output: %v", injErr)
+		// The text itself is intact and already stored — only the delivery
+		// failed, so the entry is marked recoverable rather than lost.
+		entry.Status = history.StatusFailed
+		entry.FailedStep = logbuf.StepInsert
+		entry.ErrorMessage = storableError(injErr)
+		a.updateEntry(&entry)
+		a.emitAttemptFailed(entry)
 	}
 
 	if a.getNotifications() {
@@ -863,9 +1264,94 @@ func (a *App) handleStopAndProcess(rec *audio.Recording, gen uint64) {
 		})
 	}
 
+	a.settleState(gen)
+}
+
+func (a *App) addEntry(e history.Entry) {
+	if err := a.hist.Add(e); err != nil {
+		logbuf.Errorf(logbuf.StepHistory, "writing history: %v", err)
+	}
+}
+
+// updateEntry persists the current state of e. A failure is logged rather than
+// returned: every caller is on a path where the in-memory entry is already the
+// truth and the pipeline must carry on.
+func (a *App) updateEntry(e *history.Entry) {
+	if _, err := a.hist.Update(e.ID, func(stored *history.Entry) {
+		*stored = *e
+	}); err != nil {
+		logbuf.Errorf(logbuf.StepHistory, "saving entry %s: %v", e.ID, err)
+	}
+}
+
+// maxStoredErrorLen bounds what goes into the history file. Backend errors can
+// carry a whole HTTP response body, and the entry is meant to say what went
+// wrong, not to archive the response.
+const maxStoredErrorLen = 300
+
+// storableError prepares an error for the history file: query strings are
+// stripped, because a self-hosted backend URL may carry a credential there, and
+// the message is truncated.
+func storableError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := redactQueryStrings(err.Error())
+	if len(msg) > maxStoredErrorLen {
+		msg = msg[:maxStoredErrorLen] + "…"
+	}
+	return msg
+}
+
+var urlWithQuery = regexp.MustCompile(`(https?://[^\s?"]+)\?[^\s"]*`)
+
+func redactQueryStrings(s string) string {
+	return urlWithQuery.ReplaceAllString(s, "$1?…")
+}
+
+// settleState returns to idle unless a newer recording has taken over.
+func (a *App) settleState(gen uint64) {
 	if a.recordingGen.Load() == gen {
 		a.setState("idle")
 	}
+}
+
+// emitAttemptFailed tells the UI that an attempt failed and whether the audio
+// is still there to retry from.
+func (a *App) emitAttemptFailed(e history.Entry) {
+	if a.ui == nil {
+		return
+	}
+	a.ui.EmitEvent("attempt-failed", map[string]any{
+		"entry_id":  e.ID,
+		"step":      e.FailedStep,
+		"message":   e.ErrorMessage,
+		"text":      e.CleanedText,
+		"can_retry": a.hist.AudioPath(e) != "",
+	})
+}
+
+// pipelineError carries the pipeline step a failure happened in, so the UI and
+// the history entry can name it instead of showing a bare message.
+type pipelineError struct {
+	step string
+	err  error
+}
+
+func (e *pipelineError) Error() string { return e.err.Error() }
+func (e *pipelineError) Unwrap() error { return e.err }
+
+func pipelineErrf(step string, format string, args ...any) error {
+	return &pipelineError{step: step, err: fmt.Errorf(format, args...)}
+}
+
+// stepOf extracts the pipeline step from an error, falling back to fallback.
+func stepOf(err error, fallback string) string {
+	var pe *pipelineError
+	if errors.As(err, &pe) {
+		return pe.step
+	}
+	return fallback
 }
 
 type transcriptionResult struct {
@@ -889,7 +1375,7 @@ func (a *App) notifyInsufficientCredits() {
 		return
 	}
 	if err := notify.Send("vox", insufficientCreditsMessage); err != nil {
-		fmt.Fprintf(os.Stderr, "vox: notify: %v\n", err)
+		logbuf.Warnf(logbuf.StepApp, "notify: %v", err)
 	}
 }
 
@@ -909,7 +1395,7 @@ func (a *App) transcribeAndCleanup(audioFile string, ctx *windowctx.Context) (tr
 	sttNeedsKey := sttBackend == "" || sttBackend == "openai"
 	llmNeedsKey := llmBackend == "" || llmBackend == "openai"
 	if apiKey == "" && (sttNeedsKey || llmNeedsKey) {
-		return transcriptionResult{}, fmt.Errorf("no API key set — configure in Settings")
+		return transcriptionResult{}, pipelineErrf(logbuf.StepApp, "no API key set — configure in Settings")
 	}
 
 	a.dataMu.RLock()
@@ -922,11 +1408,11 @@ func (a *App) transcribeAndCleanup(audioFile string, ctx *windowctx.Context) (tr
 	transcriber := stt.NewTranscriber(sttBackend, apiKey, sttURL, sttModel)
 	rawText, err := transcriber.Transcribe(audioFile, lang, whisperPrompt)
 	if err != nil {
-		return transcriptionResult{}, fmt.Errorf("transcription: %w", err)
+		return transcriptionResult{}, pipelineErrf(logbuf.StepSTT, "transcription: %w", err)
 	}
 
 	if isHallucination(rawText) {
-		return transcriptionResult{}, fmt.Errorf("no speech detected")
+		return transcriptionResult{}, pipelineErrf(logbuf.StepSTT, "%w", errNoSpeech)
 	}
 
 	result := rawText
@@ -935,7 +1421,7 @@ func (a *App) transcribeAndCleanup(audioFile string, ctx *windowctx.Context) (tr
 		cleaner := cleanup.NewCleanerFromConfig(llmBackend, apiKey, llmURL, llmModel)
 		cleaned, err := cleanupWithPrompts(cleaner, rawText, lang, ctx, dictionary, customPrompts)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "cleanup failed, using raw text: %v\n", err)
+			logbuf.Warnf(logbuf.StepCleanup, "cleanup failed, using raw text: %v", err)
 			if errors.Is(err, apierr.ErrInsufficientCredits) {
 				cleanupCreditErr = true
 			}
@@ -1008,7 +1494,7 @@ func isHallucination(text string) bool {
 	}
 	for _, re := range whisperHallucinationRegexps {
 		if re.MatchString(normalized) {
-			fmt.Fprintf(os.Stderr, "vox: filtered hallucination: %q\n", text)
+			logbuf.Infof(logbuf.StepSTT, "filtered hallucination (%d chars)", len(text))
 			return true
 		}
 	}
@@ -1016,7 +1502,7 @@ func isHallucination(text string) bool {
 	for _, h := range whisperHallucinations {
 		hStripped := stripNonLetters(h)
 		if strings.Contains(stripped, hStripped) {
-			fmt.Fprintf(os.Stderr, "vox: filtered hallucination: %q\n", text)
+			logbuf.Infof(logbuf.StepSTT, "filtered hallucination (%d chars)", len(text))
 			return true
 		}
 	}
