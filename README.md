@@ -115,7 +115,7 @@ startup, so a change takes effect on the next start.
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `history_size` | 1000 | Entries whose text is kept in `history.jsonl`. Zero, negative and non-numeric values are ignored and the default applies. |
-| `audio_keep` | 30 | Newest entries whose recording is kept in `recordings/`. `0` keeps no recording at all — nothing is written to the config directory, and no attempt can be retried. Negative values are ignored. |
+| `audio_keep` | 30 | Newest entries whose recording is kept in `recordings/`. `0` keeps no recording at all — nothing is written to `recordings/`, and no attempt can be retried. Negative and non-numeric values are ignored. |
 
 Text and audio are deliberately independent: an entry costs about 1 KB of text, but a minute of
 audio is about 1.9 MB. There is no size cap on top of `audio_keep` — the History view reports how
@@ -247,13 +247,17 @@ Run through this list on each target platform. Items marked _(platform)_ apply o
 
 ### Failure recovery
 
-Force each failure and confirm the recording survives it. For the STT, cleanup and insert
-failures, `~/.config/vox/recordings/` must still hold the WAV afterwards and the history must
-show the attempt as failed. The last two items are the deliberate exceptions.
+Force each failure and confirm the recording behaves as described. An STT or insert failure
+marks the attempt **failed** and keeps the WAV in `~/.config/vox/recordings/` so it can be
+transcribed again. A cleanup failure is not fatal — the raw text is used and the attempt is
+stored as a normal success. Silence, ESC and `audio_keep: 0` are the cases where no recording
+is meant to survive.
 
 - [ ] Wrong API key → attempt fails at the STT step, banner names it, `Try again → clipboard` recovers the text after fixing the key.
 - [ ] Airplane mode / no network → same, and the recording is still there.
-- [ ] Silence only → "no speech detected" is recorded as a failed attempt, and the recording is kept rather than discarded.
+- [ ] Injection failure (no focused target, or the injection backend unavailable) → the attempt is marked failed at the insert step, no success notification fires, and the banner still offers the transcribed text for the clipboard.
+- [ ] Cleanup backend unreachable → the attempt still succeeds with the raw text, and a warning shows live in Diagnostics.
+- [ ] Silence only → "no speech detected" is recorded as a failed attempt, and the recording is discarded on purpose (re-transcribing silence yields the same result), so the row offers no retry.
 - [ ] ESC during recording → recording is discarded on purpose; no history entry, no leftover WAV.
 - [ ] Kill the app during transcription → the entry is in `history.jsonl` as `pending` and the WAV survives; the next start turns it into a failed attempt that can be transcribed again.
 - [ ] Set `audio_keep: 0`, dictate → no file appears in `recordings/` at any point, and the history offers no retry.
@@ -267,7 +271,8 @@ show the attempt as failed. The last two items are the deliberate exceptions.
 - [ ] History rows of the newest `audio_keep` entries offer Play, Re-transcribe, Download and Reveal; older rows offer only the copy actions.
 - [ ] Re-transcribe on a stored recording replaces the entry's text without a new recording.
 - [ ] `Reveal history.jsonl` opens the file manager — _(macOS/Windows)_ with the file selected, _(Linux)_ at the containing directory.
-- [ ] Diagnostics view lists steps and causes, filters to warnings/errors, and copies the log to the clipboard.
+- [ ] Diagnostics view lists steps and causes, filters to warnings/errors, and copies the log to the clipboard; warnings and errors appear live as they happen.
+- [ ] Insufficient credits → the yellow "Backend problem" banner appears with the billing message and stays until dismissed.
 - [ ] About view shows the correct version string.
 
 ### Platform-specific

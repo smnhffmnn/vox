@@ -28,7 +28,7 @@
   let playingId = $state<string | null>(null)
   // Recordings are expensive to move across the bridge, so a fetched one is
   // reused for pause/resume and for the download.
-  let audioCache = new Map<string, string>()
+  let audioCache = new Map<string, { url: string; filename: string }>()
   let notice = $state<{ kind: 'ok' | 'error'; text: string } | null>(null)
   let noticeTimer: ReturnType<typeof setTimeout> | undefined
   let audioEl: HTMLAudioElement | undefined
@@ -80,7 +80,7 @@
     busy = on ? [...busy, id] : busy.filter((b) => b !== id)
   }
 
-  async function audioURL(entry: HistoryEntry): Promise<string | null> {
+  async function audioURL(entry: HistoryEntry): Promise<{ url: string; filename: string } | null> {
     const cached = audioCache.get(entry.id)
     if (cached) return cached
 
@@ -89,9 +89,9 @@
       flash('error', data.error)
       return null
     }
-    const url = `data:${data.mime_type};base64,${data.base64}`
-    audioCache.set(entry.id, url)
-    return url
+    const item = { url: `data:${data.mime_type};base64,${data.base64}`, filename: data.filename }
+    audioCache.set(entry.id, item)
+    return item
   }
 
   function flash(kind: 'ok' | 'error', text: string) {
@@ -126,9 +126,9 @@
 
     setBusy(entry.id, true)
     try {
-      const url = await audioURL(entry)
-      if (!url) return
-      audioEl.src = url
+      const item = await audioURL(entry)
+      if (!item) return
+      audioEl.src = item.url
       await audioEl.play()
       playingId = entry.id
     } catch (e) {
@@ -143,11 +143,13 @@
 
     setBusy(entry.id, true)
     try {
-      const url = await audioURL(entry)
-      if (!url) return
+      const item = await audioURL(entry)
+      if (!item) return
       const a = document.createElement('a')
-      a.href = url
-      a.download = `vox-${entry.timestamp.slice(0, 19).replace(/[:T]/g, '-')}.wav`
+      a.href = item.url
+      // Use the backend-computed name so the download filename is defined in one
+      // place rather than re-derived here.
+      a.download = item.filename
       a.click()
     } catch (e) {
       flash('error', `Download failed: ${e}`)
@@ -209,9 +211,14 @@
 
   function formatDuration(sec: number): string {
     if (sec < 1) return '<1s'
-    if (sec < 60) return `${sec.toFixed(1)}s`
+    // Rounding can reach a full 60 (toFixed rounds 59.97s to "60.0", Math.round
+    // rounds 119.6s to 60); carry into the next unit instead of showing "60.0s"
+    // or "1m 60s".
+    if (sec < 60) return sec >= 59.95 ? '1m 0s' : `${sec.toFixed(1)}s`
     const m = Math.floor(sec / 60)
-    return `${m}m ${Math.round(sec % 60)}s`
+    const s = Math.round(sec % 60)
+    if (s === 60) return `${m + 1}m 0s`
+    return `${m}m ${s}s`
   }
 
   function formatBytes(bytes: number): string {
@@ -278,7 +285,7 @@
                 <span class="backend badge">{entry.backend}</span>
               {/if}
               {#if entry.status === 'failed'}
-                <span class="badge fail">failed: {entry.failed_step}</span>
+                <span class="badge fail">failed{entry.failed_step ? `: ${entry.failed_step}` : ''}</span>
               {:else if entry.status === 'pending'}
                 <span class="badge pending" title="Transcription had not finished">
                   in progress
@@ -325,7 +332,7 @@
               </button>
             {/if}
 
-            {#if entry.has_audio}
+            {#if entry.has_audio && entry.status !== 'pending'}
               <button
                 class="action"
                 onclick={() => togglePlay(entry)}

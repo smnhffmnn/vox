@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -366,6 +367,45 @@ func TestCleanOrphans_RemovesOldUnreferencedOnly(t *testing.T) {
 	}
 	if _, err := os.Stat(stale); err == nil {
 		t.Error("orphan older than the grace window should have been removed")
+	}
+}
+
+func TestCleanOrphans_SkipsWhenLoadIncomplete(t *testing.T) {
+	home := setHome(t)
+
+	path := filepath.Join(home, ".config", "vox", "history.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// A line beyond the scanner cap aborts the load; the "tail" entry after it —
+	// which references tail.wav — is therefore never read into memory.
+	huge := strings.Repeat("x", 5*1024*1024)
+	content := `{"id":"first","raw_text":"first","timestamp":"2026-04-16T12:00:00Z"}` + "\n" +
+		`{"id":"huge","raw_text":"` + huge + `"}` + "\n" +
+		`{"id":"tail","audio_file":"tail.wav","timestamp":"2026-04-16T12:00:02Z"}` + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	h := NewHistory(10, 10)
+	if h.LoadError() == nil {
+		t.Fatal("a partial read must be reported via LoadError")
+	}
+
+	// tail.wav's entry sits past the truncation point, so it is not in the
+	// in-memory set. Without the loadErr guard, CleanOrphans would read the
+	// directory, see an old unreferenced file, and delete a recording the file on
+	// disk still accounts for.
+	tail := writeAudio(t, h, "tail")
+	old := time.Now().Add(-2 * orphanGrace)
+	if err := os.Chtimes(tail, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	h.CleanOrphans()
+
+	if _, err := os.Stat(tail); err != nil {
+		t.Errorf("a recording must survive orphan cleanup while the load was incomplete: %v", err)
 	}
 }
 
@@ -795,6 +835,59 @@ func TestDropAudio_RemovesFileAndReference(t *testing.T) {
 	got, _ := NewHistory(10, 10).Get("silence")
 	if got.AudioFile != "" {
 		t.Errorf("audio reference survived as %q", got.AudioFile)
+	}
+}
+
+func TestDropAudio_SkipsAHeldRecording(t *testing.T) {
+	setHome(t)
+
+	h := NewHistory(10, 10)
+	path := writeAudio(t, h, "held")
+	e := entryWithAudio("held", "")
+	if err := h.Add(e); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	release := h.HoldAudio(e)
+	defer release()
+
+	h.DropAudio("held")
+
+	// The reference is cleared, but a held file must stay on disk: a retry may be
+	// reading it. It becomes an orphan and is cleaned on a later startup.
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("a held recording must survive DropAudio: %v", err)
+	}
+	if got, ok := h.Get("held"); !ok || got.AudioFile != "" {
+		t.Errorf("DropAudio should clear the reference even when held; got AudioFile=%q ok=%v", got.AudioFile, ok)
+	}
+}
+
+func TestNewID_UniqueUnderConcurrency(t *testing.T) {
+	// Two attempts minted in the same clock tick must not share an id: the id
+	// names the recording, so a collision would overwrite one attempt's audio.
+	const n = 2000
+	ids := make(chan string, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ids <- NewID()
+		}()
+	}
+	wg.Wait()
+	close(ids)
+
+	seen := make(map[string]bool, n)
+	for id := range ids {
+		if seen[id] {
+			t.Fatalf("NewID produced a duplicate: %q", id)
+		}
+		seen[id] = true
+	}
+	if len(seen) != n {
+		t.Errorf("got %d unique ids, want %d", len(seen), n)
 	}
 }
 

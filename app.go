@@ -107,10 +107,14 @@ func NewApp() *App {
 // Start initializes the app (hotkey listener, dynamic data).
 // Called by the desktop lifecycle (ServiceStartup) or headless entry.
 func (a *App) Start() {
-	// Push every error-level diagnostic to the UI, so a failure is visible
-	// without opening a terminal.
+	// Push warnings and errors to the UI as they happen, so a cause is visible
+	// without opening a terminal — the Diagnostics view is built to show exactly
+	// these, and a warning-level degrade (cleanup fell back to raw text, a
+	// recovery ran) would otherwise only appear after a manual refresh. Info
+	// stays out of the live stream as noise; it is still in the buffer for
+	// GetLogs. The frontend decides what raises the error badge.
 	logbuf.SetSink(func(rec logbuf.Record) {
-		if rec.Level != logbuf.LevelError || a.ui == nil {
+		if a.ui == nil || (rec.Level != logbuf.LevelError && rec.Level != logbuf.LevelWarn) {
 			return
 		}
 		a.ui.EmitEvent("log-error", map[string]string{
@@ -491,7 +495,7 @@ func (a *App) RetryEntry(id string, toClipboard bool) RetryResult {
 	tr, err := a.transcribeAndCleanup(audioPath, wctx)
 	if err != nil {
 		step := stepOf(err, logbuf.StepSTT)
-		logbuf.Errorf(step, "retry failed: %v", err)
+		logbuf.Errorf(step, "retry failed: %s", redactURLCredentials(err.Error()))
 		if errors.Is(err, apierr.ErrInsufficientCredits) {
 			a.notifyInsufficientCredits()
 		}
@@ -499,7 +503,7 @@ func (a *App) RetryEntry(id string, toClipboard bool) RetryResult {
 		// Do not demote an entry that already holds a usable transcription:
 		// re-transcribing a good entry and hitting a network blip must not turn
 		// it into a failure.
-		result := RetryResult{Error: err.Error(), Entry: toHistoryEntry(entry, present)}
+		result := RetryResult{Error: redactURLCredentials(err.Error()), Entry: toHistoryEntry(entry, present)}
 		if entry.HasText() {
 			return result
 		}
@@ -688,7 +692,7 @@ func (a *App) TestSTT() TestResult {
 	client := &http.Client{Timeout: 5 * time.Second}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return TestResult{OK: false, Error: err.Error()}
+		return TestResult{OK: false, Error: redactURLCredentials(err.Error())}
 	}
 	if backend != "local" {
 		if key := a.resolveAPIKey(); key != "" {
@@ -697,7 +701,7 @@ func (a *App) TestSTT() TestResult {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return TestResult{OK: false, Error: err.Error()}
+		return TestResult{OK: false, Error: redactURLCredentials(err.Error())}
 	}
 	resp.Body.Close()
 	return TestResult{OK: resp.StatusCode == 200, Status: resp.StatusCode}
@@ -726,7 +730,7 @@ func (a *App) TestLLM() TestResult {
 	client := &http.Client{Timeout: 5 * time.Second}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return TestResult{OK: false, Error: err.Error()}
+		return TestResult{OK: false, Error: redactURLCredentials(err.Error())}
 	}
 	if llmBackend != "ollama" {
 		if key := a.resolveAPIKey(); key != "" {
@@ -735,7 +739,7 @@ func (a *App) TestLLM() TestResult {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return TestResult{OK: false, Error: err.Error()}
+		return TestResult{OK: false, Error: redactURLCredentials(err.Error())}
 	}
 	resp.Body.Close()
 	return TestResult{OK: resp.StatusCode == 200, Status: resp.StatusCode}
@@ -878,6 +882,10 @@ func (a *App) startRec() {
 	}
 	a.recording = rec
 	a.isRecording = true
+	// A new capture supersedes any still-processing previous one: bump the
+	// generation so a late settleState from that transcription cannot flip the
+	// state back to idle while this recording is live.
+	a.recordingGen.Add(1)
 	a.setState("recording")
 
 	canConsume := hotkey.StartEscapeMonitor(func() {
@@ -937,6 +945,8 @@ func (a *App) startHandsfree() {
 		}
 		a.recording = rec
 		a.isRecording = true
+		// See startRec: a fresh capture supersedes a still-processing one.
+		a.recordingGen.Add(1)
 	}
 	a.handsfreeActive = true
 	if a.getAudioFeedback() {
@@ -1167,17 +1177,19 @@ func (a *App) handleStopAndProcess(rec *audio.Recording, gen uint64) {
 
 	entryID := history.NewID()
 	audioPath, audioName := tmpAudio, ""
-	keepTemp := false
 
 	if a.hist.AudioKeep() == 0 {
 		// The user asked for no recordings on disk, so the file stays in the
-		// temp directory and is removed below.
+		// temp directory and is removed on the way out.
 		defer os.Remove(tmpAudio)
 	} else if name, stored, err := a.hist.StoreAudio(entryID, tmpAudio); err != nil {
 		// Raised to error level on purpose: this is the one case where a retry
-		// will not be possible, so the user should see it.
-		logbuf.Errorf(logbuf.StepRecording, "cannot keep the recording: %v — a retry will not be possible; the temporary file is at %s", err, tmpAudio)
-		keepTemp = true
+		// will not be possible, so the user should see it. The recording stays in
+		// the temp dir for this transcription and is removed on the way out —
+		// leaving it would leak an unreferenced file that no entry points at and
+		// that CleanOrphans never scans.
+		logbuf.Errorf(logbuf.StepRecording, "cannot keep the recording: %v — this attempt cannot be retried", err)
+		defer os.Remove(tmpAudio)
 	} else {
 		audioName, audioPath = name, stored
 	}
@@ -1194,15 +1206,25 @@ func (a *App) handleStopAndProcess(rec *audio.Recording, gen uint64) {
 		Status:      history.StatusPending,
 	}
 
+	// Pin the recording before the entry references it and for the whole read.
+	// Once addEntry writes the pending entry, a concurrent dictation's pruneAudio
+	// could evict this file — including in the gap before the hold is taken — so
+	// hold first: addEntry's own prune and any concurrent one then skip it. No-op
+	// when nothing was stored (audio_keep: 0, or StoreAudio failed). Released
+	// right after the read — from there the file is subject to normal retention,
+	// and the silence path below deletes it.
+	release := a.hist.HoldAudio(entry)
+
 	// Store the attempt before transcribing. Transcription can take minutes, and
 	// until an entry references the recording it is invisible in the history and
 	// would be swept up as an orphan after a crash.
 	a.addEntry(entry)
 
 	tr, err := a.transcribeAndCleanup(audioPath, wctx)
+	release()
 	if err != nil {
 		step := stepOf(err, logbuf.StepSTT)
-		logbuf.Errorf(step, "%v", err)
+		logbuf.Errorf(step, "%s", redactURLCredentials(err.Error()))
 		if errors.Is(err, apierr.ErrInsufficientCredits) {
 			a.notifyInsufficientCredits()
 		}
@@ -1235,22 +1257,21 @@ func (a *App) handleStopAndProcess(rec *audio.Recording, gen uint64) {
 	// a crash in the injection step below.
 	a.updateEntry(&entry)
 
-	if keepTemp {
-		// The attempt succeeded, so the unpersisted recording is no longer
-		// needed as a fallback.
-		os.Remove(tmpAudio)
-	}
-
 	method := inject.ParseMethod(output)
 	if injErr := inject.Inject(method, tr.cleaned); injErr != nil {
 		logbuf.Errorf(logbuf.StepInsert, "output: %v", injErr)
 		// The text itself is intact and already stored — only the delivery
-		// failed, so the entry is marked recoverable rather than lost.
+		// failed, so the entry is marked recoverable rather than lost. Stop here:
+		// the success notification and the "transcription" event below would tell
+		// the user the dictation landed at the cursor when it did not. The failure
+		// banner already carries the text for recovery.
 		entry.Status = history.StatusFailed
 		entry.FailedStep = logbuf.StepInsert
 		entry.ErrorMessage = storableError(injErr)
 		a.updateEntry(&entry)
 		a.emitAttemptFailed(entry)
+		a.settleState(gen)
+		return
 	}
 
 	if a.getNotifications() {
@@ -1289,24 +1310,36 @@ func (a *App) updateEntry(e *history.Entry) {
 // wrong, not to archive the response.
 const maxStoredErrorLen = 300
 
-// storableError prepares an error for the history file: query strings are
-// stripped, because a self-hosted backend URL may carry a credential there, and
-// the message is truncated.
+// storableError prepares an error for the history file: URL credentials are
+// stripped (a self-hosted backend URL may carry one), and the message is
+// truncated on a rune boundary so a multibyte character is never cut in half.
 func storableError(err error) string {
 	if err == nil {
 		return ""
 	}
-	msg := redactQueryStrings(err.Error())
-	if len(msg) > maxStoredErrorLen {
-		msg = msg[:maxStoredErrorLen] + "…"
+	msg := redactURLCredentials(err.Error())
+	if r := []rune(msg); len(r) > maxStoredErrorLen {
+		msg = string(r[:maxStoredErrorLen]) + "…"
 	}
 	return msg
 }
 
-var urlWithQuery = regexp.MustCompile(`(https?://[^\s?"]+)\?[^\s"]*`)
+var (
+	urlWithQuery    = regexp.MustCompile(`(https?://[^\s?"]+)\?[^\s"]*`)
+	urlWithUserinfo = regexp.MustCompile(`(https?://)[^/\s"@]+@`)
+)
 
-func redactQueryStrings(s string) string {
-	return urlWithQuery.ReplaceAllString(s, "$1?…")
+// redactURLCredentials removes credentials a backend URL may carry — a
+// query-string token and HTTP userinfo (user:pass@), the two forms a self-hosted
+// STT/LLM URL usually uses — so an error string can go into the history file, the
+// diagnostics log, or a UI banner without leaking them. Applied at every boundary
+// that persists or surfaces a backend error. A credential in a URL *path* segment
+// is out of scope: redacting whole paths would strip the useful part of most
+// error messages, and that placement is rare.
+func redactURLCredentials(s string) string {
+	s = urlWithQuery.ReplaceAllString(s, "$1?…")
+	s = urlWithUserinfo.ReplaceAllString(s, "$1…@")
+	return s
 }
 
 // settleState returns to idle unless a newer recording has taken over.
@@ -1421,7 +1454,7 @@ func (a *App) transcribeAndCleanup(audioFile string, ctx *windowctx.Context) (tr
 		cleaner := cleanup.NewCleanerFromConfig(llmBackend, apiKey, llmURL, llmModel)
 		cleaned, err := cleanupWithPrompts(cleaner, rawText, lang, ctx, dictionary, customPrompts)
 		if err != nil {
-			logbuf.Warnf(logbuf.StepCleanup, "cleanup failed, using raw text: %v", err)
+			logbuf.Warnf(logbuf.StepCleanup, "cleanup failed, using raw text: %s", redactURLCredentials(err.Error()))
 			if errors.Is(err, apierr.ErrInsufficientCredits) {
 				cleanupCreditErr = true
 			}

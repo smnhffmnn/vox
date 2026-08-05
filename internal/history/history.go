@@ -192,9 +192,26 @@ func idFromTime(t time.Time) string {
 	return strconv.FormatInt(t.UnixNano(), 10)
 }
 
-// NewID returns an id for a new entry. Exported so the caller can name the
-// audio file before the entry itself exists.
-func NewID() string { return idFromTime(time.Now()) }
+var (
+	idMu     sync.Mutex
+	idLastNS int64
+)
+
+// NewID returns a process-unique id for a new entry, exported so the caller can
+// name the audio file before the entry itself exists. It is monotonic: two
+// entries minted within the same clock tick — plausible on a coarse-resolution
+// clock — would otherwise share an id and, through audioFileName, overwrite each
+// other's recording.
+func NewID() string {
+	idMu.Lock()
+	ns := time.Now().UnixNano()
+	if ns <= idLastNS {
+		ns = idLastNS + 1
+	}
+	idLastNS = ns
+	idMu.Unlock()
+	return strconv.FormatInt(ns, 10)
+}
 
 // audioDirEnsured returns the directory holding recordings, creating it on
 // demand as owner-only: the files in it are recordings of the user's voice.
@@ -255,7 +272,12 @@ func (h *History) DropAudio(id string) {
 			continue
 		}
 		if name := safeAudioName(h.entries[i].AudioFile); name != "" && h.audioDir != "" {
-			_ = os.Remove(filepath.Join(h.audioDir, name))
+			// Skip a recording a retry is currently reading, as pruning does:
+			// the reference is cleared regardless, so the file becomes an orphan
+			// and is cleaned at the next startup once the hold is gone.
+			if _, held := h.inUse[name]; !held {
+				_ = os.Remove(filepath.Join(h.audioDir, name))
+			}
 		}
 		h.entries[i].AudioFile = ""
 		_ = h.writeAll()
@@ -298,6 +320,11 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(dst)
+		return err
+	}
+	if err := out.Sync(); err != nil {
 		out.Close()
 		os.Remove(dst)
 		return err
@@ -466,8 +493,12 @@ func (h *History) appendOne(entry Entry) error {
 	if err != nil {
 		return err
 	}
-	_, err = f.Write(append(data, '\n'))
-	return err
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		return err
+	}
+	// Flush to disk: this is the durable marker that the recording exists, and a
+	// crash before it reaches disk turns a recoverable attempt into an orphan.
+	return f.Sync()
 }
 
 // writeAll replaces the history file with the current entries.
@@ -519,6 +550,14 @@ func (h *History) writeAll() error {
 		os.Remove(tmp)
 		return err
 	}
+	// fsync the directory so the rename itself survives a crash: the temp file's
+	// contents are synced above, but on some filesystems the directory entry that
+	// makes the new file the history can still be lost without this. Best-effort —
+	// a directory handle does not support Sync on every platform.
+	if dir, err := os.Open(filepath.Dir(h.path)); err == nil {
+		_ = dir.Sync()
+		_ = dir.Close()
+	}
 	return nil
 }
 
@@ -543,13 +582,21 @@ func (h *History) removeAudioOf(entries []Entry) {
 // pruneAudio deletes recordings belonging to entries outside the retention
 // window. Callers must hold h.mu.
 //
-// It only ever deletes files a known entry points at. Files it does not know
-// about are left alone, because a recording that is still being transcribed
-// has no entry yet and must survive — losing it is exactly the failure this
-// retention scheme exists to prevent. Startup handles leftovers instead
-// (see CleanOrphans).
+// It only ever deletes files a known entry points at; files it does not know
+// about are left alone. A recording whose transcription is still in flight does
+// have an entry now — it is written as pending before transcribing — so it can
+// fall inside this prune; callers guard it with HoldAudio for the duration, and
+// held recordings are skipped below. Unreferenced leftovers from a crash are
+// handled at startup instead (see CleanOrphans).
 func (h *History) pruneAudio() {
 	if h.audioDir == "" || h.audioKeep < 0 {
+		return
+	}
+	// A partial load leaves the newest entries out of the in-memory set, so a
+	// prune driven by it could delete a recording whose entry simply was not
+	// read. Refuse, like CleanOrphans and writeAll do — retention waits for a
+	// clean load rather than risk deleting data the file still holds.
+	if h.loadErr != nil {
 		return
 	}
 
@@ -603,6 +650,13 @@ func (h *History) CleanOrphans() {
 	defer h.mu.Unlock()
 
 	if h.audioDir == "" {
+		return
+	}
+	// A partial load leaves the newest entries out of the in-memory set, so their
+	// recordings would be misclassified as orphans and deleted. Refuse then,
+	// mirroring writeAll's guard: the file on disk still holds everything, and
+	// deleting its audio is exactly the loss that guard exists to prevent.
+	if h.loadErr != nil {
 		return
 	}
 	// Applying the retention window must not depend on the directory scan below

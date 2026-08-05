@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/smnhffmnn/vox/internal/logbuf"
 )
@@ -114,7 +115,7 @@ func TestEscapeYAMLValue(t *testing.T) {
 	}
 }
 
-func TestRedactQueryStrings(t *testing.T) {
+func TestRedactURLCredentials(t *testing.T) {
 	cases := []struct {
 		name string
 		in   string
@@ -140,11 +141,21 @@ func TestRedactQueryStrings(t *testing.T) {
 			in:   "http://a.local/x?t=1 and https://b.local/y?u=2",
 			want: "http://a.local/x?… and https://b.local/y?…",
 		},
+		{
+			name: "userinfo credential is removed",
+			in:   `Post "https://user:pass@gw.local/v1/audio": EOF`,
+			want: `Post "https://…@gw.local/v1/audio": EOF`,
+		},
+		{
+			name: "userinfo and query are both removed",
+			in:   `Get "https://token@gw.local/v1?key=sk-secret": timeout`,
+			want: `Get "https://…@gw.local/v1?…": timeout`,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := redactQueryStrings(c.in); got != c.want {
-				t.Errorf("redactQueryStrings(%q) = %q, want %q", c.in, got, c.want)
+			if got := redactURLCredentials(c.in); got != c.want {
+				t.Errorf("redactURLCredentials(%q) = %q, want %q", c.in, got, c.want)
 			}
 		})
 	}
@@ -166,10 +177,28 @@ func TestStorableError(t *testing.T) {
 		t.Error("a truncated message should be marked as truncated")
 	}
 
-	// Redaction applies to what gets persisted.
+	// Redaction applies to what gets persisted — both query-string and userinfo.
 	withKey := errors.New(`Post "https://gw.local/v1?key=sk-abc": EOF`)
 	if strings.Contains(storableError(withKey), "sk-abc") {
 		t.Error("a query-string credential must not reach the history file")
+	}
+	withUserinfo := errors.New(`Post "https://user:sk-xyz@gw.local/v1": EOF`)
+	if strings.Contains(storableError(withUserinfo), "sk-xyz") {
+		t.Error("a userinfo credential must not reach the history file")
+	}
+
+	// Truncation happens on a rune boundary, so a multibyte character is never
+	// cut into an invalid fragment. The single-byte prefix pushes the byte offset
+	// into the middle of a rune — where a byte-slice truncation splits it; a plain
+	// repeat of one rune lands on a boundary either way and would pass even
+	// against the unfixed code.
+	multibyte := errors.New("x" + strings.Repeat("ü", maxStoredErrorLen+50))
+	got = storableError(multibyte)
+	if !utf8.ValidString(got) {
+		t.Error("truncation split a multibyte rune")
+	}
+	if r := []rune(got); len(r) != maxStoredErrorLen+1 { // 300 runes + the "…"
+		t.Errorf("truncated to %d runes, want %d", len(r), maxStoredErrorLen+1)
 	}
 }
 

@@ -16,6 +16,7 @@
   let cleanupStateEvent: (() => void) | undefined
   let cleanupFailedEvent: (() => void) | undefined
   let cleanupLogEvent: (() => void) | undefined
+  let cleanupApiErrorEvent: (() => void) | undefined
 
   // The last failed attempt, kept until dismissed. This is the surface that
   // tells the user a dictation was lost — and that it is recoverable.
@@ -27,6 +28,13 @@
   // Errors that arrived while the user was on another view, so the Diagnostics
   // nav item can carry a marker instead of the failure passing unnoticed.
   let unseenErrors = $state(0)
+
+  // A backend/billing problem (e.g. insufficient credits). Surfaced on its own
+  // because a cleanup credit error degrades to raw text and delivers
+  // successfully — no attempt-failed banner fires then, so for that case this is
+  // the only in-app sign of it. An STT credit error also raises the failure
+  // banner; the two are complementary (cause + recovery).
+  let apiError = $state<string | null>(null)
 
   const navItems: { id: View; label: string }[] = [
     { id: 'status', label: 'Status' },
@@ -135,9 +143,13 @@
       recoveredWarning = null
     })
     // Not every error produces a failure banner (a failing history write, for
-    // one), so mark the Diagnostics view rather than let it pass unnoticed.
-    cleanupLogEvent = EventsOn('log-error', () => {
-      if ($activeView !== 'logs') unseenErrors += 1
+    // one), so mark the Diagnostics view rather than let it pass unnoticed. The
+    // stream also carries warnings now; only errors raise the badge.
+    cleanupLogEvent = EventsOn<{ level: string }>('log-error', (rec) => {
+      if (rec?.level === 'error' && $activeView !== 'logs') unseenErrors += 1
+    })
+    cleanupApiErrorEvent = EventsOn<{ kind: string; message: string }>('api-error', (data) => {
+      apiError = data?.message ?? 'A backend request failed.'
     })
   })
 
@@ -149,6 +161,7 @@
     if (cleanupStateEvent) cleanupStateEvent()
     if (cleanupFailedEvent) cleanupFailedEvent()
     if (cleanupLogEvent) cleanupLogEvent()
+    if (cleanupApiErrorEvent) cleanupApiErrorEvent()
   })
 </script>
 
@@ -187,6 +200,16 @@
   </div>
 
   <main class="content">
+    {#if apiError}
+      <div class="api-error">
+        <div class="failure-head">
+          <strong>Backend problem</strong>
+          <button class="close" onclick={() => (apiError = null)} aria-label="Dismiss">×</button>
+        </div>
+        <p class="failure-note">{apiError}</p>
+      </div>
+    {/if}
+
     {#if failure}
       <div class="failure" class:resolved={recovered !== null}>
         {#if recovered !== null}
@@ -382,6 +405,14 @@
     border: 1px solid var(--red);
     border-radius: var(--radius);
     background: var(--red-bg);
+  }
+
+  .api-error {
+    margin-bottom: 20px;
+    padding: 12px 14px;
+    border: 1px solid var(--yellow);
+    border-radius: var(--radius);
+    background: var(--yellow-bg);
   }
 
   .failure.resolved {

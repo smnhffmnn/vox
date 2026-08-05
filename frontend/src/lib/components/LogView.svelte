@@ -25,7 +25,10 @@
     // errors would otherwise trigger a refetch storm on the very view that is
     // supposed to show them.
     cancelLogEvent = EventsOn<LogRecord>('log-error', (rec) => {
-      if (rec?.message) records = [rec, ...records]
+      // Cap on insert, mirroring the backend's 500-record ring buffer: without
+      // it a long-running app with recurring errors grows this array unbounded
+      // until the next manual refresh.
+      if (rec?.message) records = [rec, ...records].slice(0, 500)
     })
   })
 
