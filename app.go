@@ -33,9 +33,9 @@ import (
 
 const insufficientCreditsMessage = "OpenAI-Guthaben aufgebraucht — API-Key oder Plan prüfen"
 
-// errNoSpeech marks a transcription that produced nothing usable. The pipeline
-// treats it specially: the recording is not worth a retention slot, because
-// transcribing silence again yields the same result.
+// errNoSpeech marks a transcription that came back empty: there is nothing to
+// insert or to clean up. The recording is kept like any other failure's — an
+// empty result can be the backend's fault, so the attempt stays retryable.
 var errNoSpeech = errors.New("no speech detected")
 
 var version = "dev"
@@ -371,6 +371,11 @@ type HistoryEntry struct {
 	FailedStep   string `json:"failed_step"`
 	ErrorMessage string `json:"error_message"`
 
+	// SuspectedHallucination flags a transcript that matched a known Whisper-
+	// hallucination pattern. The text was delivered and stored regardless; the
+	// flag tells the user to double-check it.
+	SuspectedHallucination bool `json:"suspected_hallucination"`
+
 	// HasAudio reports whether the recording is still on disk. Audio is kept
 	// for the newest entries only, so this is false for most of the history.
 	HasAudio bool `json:"has_audio"`
@@ -398,18 +403,19 @@ func toHistoryEntry(e history.Entry, present map[string]struct{}) HistoryEntry {
 		status = history.StatusOK
 	}
 	return HistoryEntry{
-		ID:           e.ID,
-		Timestamp:    e.Timestamp.Format(time.RFC3339),
-		Language:     e.Language,
-		RawText:      e.RawText,
-		CleanedText:  e.CleanedText,
-		AppContext:   e.AppContext,
-		DurationSec:  e.DurationSec,
-		Backend:      e.Backend,
-		Status:       status,
-		FailedStep:   e.FailedStep,
-		ErrorMessage: e.ErrorMessage,
-		HasAudio:     history.HasAudio(e, present),
+		ID:                     e.ID,
+		Timestamp:              e.Timestamp.Format(time.RFC3339),
+		Language:               e.Language,
+		RawText:                e.RawText,
+		CleanedText:            e.CleanedText,
+		AppContext:             e.AppContext,
+		DurationSec:            e.DurationSec,
+		Backend:                e.Backend,
+		Status:                 status,
+		FailedStep:             e.FailedStep,
+		ErrorMessage:           e.ErrorMessage,
+		SuspectedHallucination: e.SuspectedHallucination,
+		HasAudio:               history.HasAudio(e, present),
 	}
 }
 
@@ -530,6 +536,9 @@ func (a *App) RetryEntry(id string, toClipboard bool) RetryResult {
 	entry.Status = history.StatusOK
 	entry.FailedStep = ""
 	entry.ErrorMessage = ""
+	// A retry re-runs the pattern check, so it can set the mark as well as
+	// clear one left by the original attempt.
+	entry.SuspectedHallucination = tr.suspectedHallucination
 
 	res := RetryResult{OK: true, Persisted: true, Entry: toHistoryEntry(entry, present)}
 
@@ -539,6 +548,7 @@ func (a *App) RetryEntry(id string, toClipboard bool) RetryResult {
 		e.Status = entry.Status
 		e.FailedStep = ""
 		e.ErrorMessage = ""
+		e.SuspectedHallucination = entry.SuspectedHallucination
 	}); uerr != nil {
 		if errors.Is(uerr, history.ErrNotFound) {
 			return RetryResult{Error: "history entry disappeared during the retry"}
@@ -917,6 +927,12 @@ func (a *App) stopAndProcess() {
 // stopAndDiscard must be called with recordingMu held.
 func (a *App) stopAndDiscard() {
 	hotkey.StopEscapeMonitor()
+	// A distinct sound, not silence: on a fullscreen space the overlay is
+	// invisible (VOX-2), so this can be the only confirmation that the
+	// recording was discarded rather than processed.
+	if a.getAudioFeedback() {
+		feedback.PlayCancel()
+	}
 	if a.recording != nil {
 		r := a.recording
 		a.recording = nil
@@ -1211,8 +1227,7 @@ func (a *App) handleStopAndProcess(rec *audio.Recording, gen uint64) {
 	// could evict this file — including in the gap before the hold is taken — so
 	// hold first: addEntry's own prune and any concurrent one then skip it. No-op
 	// when nothing was stored (audio_keep: 0, or StoreAudio failed). Released
-	// right after the read — from there the file is subject to normal retention,
-	// and the silence path below deletes it.
+	// right after the read — from there the file is subject to normal retention.
 	release := a.hist.HoldAudio(entry)
 
 	// Store the attempt before transcribing. Transcription can take minutes, and
@@ -1232,15 +1247,6 @@ func (a *App) handleStopAndProcess(rec *audio.Recording, gen uint64) {
 		entry.FailedStep = step
 		entry.ErrorMessage = storableError(err)
 		a.updateEntry(&entry)
-
-		// Silence is not worth a retention slot: transcribing it again yields
-		// the same result, and keeping it would evict the audio of a failure
-		// that is actually worth retrying.
-		if errors.Is(err, errNoSpeech) && audioName != "" {
-			a.hist.DropAudio(entry.ID)
-			entry.AudioFile = ""
-		}
-
 		a.emitAttemptFailed(entry)
 		a.settleState(gen)
 		return
@@ -1252,6 +1258,7 @@ func (a *App) handleStopAndProcess(rec *audio.Recording, gen uint64) {
 	entry.RawText = tr.raw
 	entry.CleanedText = tr.cleaned
 	entry.Status = history.StatusOK
+	entry.SuspectedHallucination = tr.suspectedHallucination
 
 	// Save before delivering: once the text is on disk it survives a failure or
 	// a crash in the injection step below.
@@ -1279,9 +1286,10 @@ func (a *App) handleStopAndProcess(rec *audio.Recording, gen uint64) {
 	}
 
 	if a.ui != nil {
-		a.ui.EmitEvent("transcription", map[string]string{
-			"raw":     tr.raw,
-			"cleaned": tr.cleaned,
+		a.ui.EmitEvent("transcription", map[string]any{
+			"raw":       tr.raw,
+			"cleaned":   tr.cleaned,
+			"suspected": tr.suspectedHallucination,
 		})
 	}
 
@@ -1395,6 +1403,11 @@ type transcriptionResult struct {
 	// that case, but the application layer still needs to surface the
 	// billing problem to the user.
 	cleanupCreditErr bool
+	// suspectedHallucination is true when the transcript matched a known
+	// Whisper-hallucination pattern. The text is delivered and stored anyway —
+	// a false alarm on real dictation must never lose it — and the entry is
+	// marked so the user knows to double-check what landed.
+	suspectedHallucination bool
 }
 
 func (a *App) notifyInsufficientCredits() {
@@ -1444,8 +1457,17 @@ func (a *App) transcribeAndCleanup(audioFile string, ctx *windowctx.Context) (tr
 		return transcriptionResult{}, pipelineErrf(logbuf.StepSTT, "transcription: %w", err)
 	}
 
-	if isHallucination(rawText) {
+	// Empty text is the one outcome that stays a failure: there is nothing to
+	// insert. Anything else goes through — a transcript that merely *looks* like
+	// a known hallucination is delivered and marked, never dropped: the patterns
+	// are fuzzy enough to match real dictation, and spoken words cannot be
+	// reconstructed while a hallucination is spotted at a glance.
+	if strings.TrimSpace(rawText) == "" {
 		return transcriptionResult{}, pipelineErrf(logbuf.StepSTT, "%w", errNoSpeech)
+	}
+	suspected := isHallucination(rawText)
+	if suspected {
+		logbuf.Warnf(logbuf.StepSTT, "transcript matches a hallucination pattern (%d chars) — delivered and marked for review", len(rawText))
 	}
 
 	result := rawText
@@ -1469,7 +1491,12 @@ func (a *App) transcribeAndCleanup(audioFile string, ctx *windowctx.Context) (tr
 		}
 	}
 
-	return transcriptionResult{raw: rawText, cleaned: result, cleanupCreditErr: cleanupCreditErr}, nil
+	return transcriptionResult{
+		raw:                    rawText,
+		cleaned:                result,
+		cleanupCreditErr:       cleanupCreditErr,
+		suspectedHallucination: suspected,
+	}, nil
 }
 
 func cleanupWithPrompts(c cleanup.CleanerInterface, text, lang string, ctx *windowctx.Context, dict []string, prompts map[string]string) (string, error) {
@@ -1491,9 +1518,9 @@ var whisperHallucinations = []string{
 	"copyright watchmojo",
 	"please subscribe",
 	"bitte abonnieren",
-	// Issue 9: additional YouTube-outro and broadcaster markers.
-	// "abonniert den" catches "Abonniert den Kanal" without false-matching
-	// legitimate uses of "abonniert" in normal dictation ("Zeitung abonniert").
+	// Additional YouTube-outro and broadcaster markers. "abonniert den" catches
+	// "Abonniert den Kanal" — but stripNonLetters merges across punctuation, so
+	// "Zeitung abonniert, den Rest…" matches too. Tolerable: a match only marks.
 	"abonniert den",
 	// SWR outros usually appear as "Untertitel: SWR YYYY". "untertitel" alone
 	// would catch it already, but in the rare case Whisper drops the prefix
@@ -1520,14 +1547,16 @@ var whisperHallucinationRegexps = []*regexp.Regexp{
 	regexp.MustCompile(`\bwww\.[a-z0-9.\-]+\.(de|com|org|net)\b\s*$`),
 }
 
+// isHallucination reports whether the text matches a known Whisper-hallucination
+// pattern. It is deliberately fuzzy — substring matches over punctuation- and
+// umlaut-stripped text hit real dictation too ("Vielen Dank für die Info…") —
+// which is acceptable only because a match marks the transcript for review
+// instead of dropping it. Empty text is not this function's concern; the
+// pipeline treats it as errNoSpeech before ever asking.
 func isHallucination(text string) bool {
 	normalized := strings.TrimSpace(strings.ToLower(text))
-	if normalized == "" {
-		return true
-	}
 	for _, re := range whisperHallucinationRegexps {
 		if re.MatchString(normalized) {
-			logbuf.Infof(logbuf.StepSTT, "filtered hallucination (%d chars)", len(text))
 			return true
 		}
 	}
@@ -1535,7 +1564,6 @@ func isHallucination(text string) bool {
 	for _, h := range whisperHallucinations {
 		hStripped := stripNonLetters(h)
 		if strings.Contains(stripped, hStripped) {
-			logbuf.Infof(logbuf.StepSTT, "filtered hallucination (%d chars)", len(text))
 			return true
 		}
 	}

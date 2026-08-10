@@ -274,6 +274,16 @@ export class HistoryEntry {
              */
             this["error_message"] = "";
         }
+        if (!("suspected_hallucination" in $$source)) {
+            /**
+             * SuspectedHallucination flags a transcript that matched a known Whisper-
+             * hallucination pattern. The text was delivered and stored regardless; the
+             * flag tells the user to double-check it.
+             * @member
+             * @type {boolean}
+             */
+            this["suspected_hallucination"] = false;
+        }
         if (!("has_audio" in $$source)) {
             /**
              * HasAudio reports whether the recording is still on disk. Audio is kept

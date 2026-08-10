@@ -291,6 +291,14 @@
                   in progress
                 </span>
               {/if}
+              {#if entry.suspected_hallucination}
+                <span
+                  class="badge suspected"
+                  title="The transcript matched a known Whisper-hallucination pattern. It was inserted and stored anyway — double-check it."
+                >
+                  check text
+                </span>
+              {/if}
               {#if entry.has_audio}
                 <span class="badge audio" title="Recording is still stored">audio</span>
               {/if}
@@ -526,6 +534,11 @@
   }
 
   .badge.pending {
+    color: var(--yellow);
+    border-color: color-mix(in srgb, var(--yellow) 45%, var(--border));
+  }
+
+  .badge.suspected {
     color: var(--yellow);
     border-color: color-mix(in srgb, var(--yellow) 45%, var(--border));
   }

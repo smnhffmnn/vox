@@ -17,6 +17,11 @@ func PlayStop() {
 	go playStopSound()
 }
 
+// PlayCancel plays the recording-discarded sound in the background.
+func PlayCancel() {
+	go playCancelSound()
+}
+
 func playStartSound() {
 	paths := []string{
 		"/usr/share/sounds/freedesktop/stereo/bell.oga",
@@ -29,6 +34,14 @@ func playStopSound() {
 	paths := []string{
 		"/usr/share/sounds/freedesktop/stereo/complete.oga",
 		"/usr/share/sounds/freedesktop/stereo/dialog-information.oga",
+	}
+	tryPlay(paths)
+}
+
+func playCancelSound() {
+	paths := []string{
+		"/usr/share/sounds/freedesktop/stereo/dialog-warning.oga",
+		"/usr/share/sounds/freedesktop/stereo/dialog-error.oga",
 	}
 	tryPlay(paths)
 }

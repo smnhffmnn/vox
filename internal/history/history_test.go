@@ -818,52 +818,6 @@ func TestAdoptPending_TurnsInterruptedAttemptsIntoFailures(t *testing.T) {
 	}
 }
 
-func TestDropAudio_RemovesFileAndReference(t *testing.T) {
-	setHome(t)
-
-	h := NewHistory(10, 10)
-	path := writeAudio(t, h, "silence")
-	e := entryWithAudio("silence", "")
-	if err := h.Add(e); err != nil {
-		t.Fatalf("Add: %v", err)
-	}
-
-	h.DropAudio("silence")
-
-	if _, err := os.Stat(path); err == nil {
-		t.Error("DropAudio should delete the recording")
-	}
-	got, _ := NewHistory(10, 10).Get("silence")
-	if got.AudioFile != "" {
-		t.Errorf("audio reference survived as %q", got.AudioFile)
-	}
-}
-
-func TestDropAudio_SkipsAHeldRecording(t *testing.T) {
-	setHome(t)
-
-	h := NewHistory(10, 10)
-	path := writeAudio(t, h, "held")
-	e := entryWithAudio("held", "")
-	if err := h.Add(e); err != nil {
-		t.Fatalf("Add: %v", err)
-	}
-
-	release := h.HoldAudio(e)
-	defer release()
-
-	h.DropAudio("held")
-
-	// The reference is cleared, but a held file must stay on disk: a retry may be
-	// reading it. It becomes an orphan and is cleaned on a later startup.
-	if _, err := os.Stat(path); err != nil {
-		t.Errorf("a held recording must survive DropAudio: %v", err)
-	}
-	if got, ok := h.Get("held"); !ok || got.AudioFile != "" {
-		t.Errorf("DropAudio should clear the reference even when held; got AudioFile=%q ok=%v", got.AudioFile, ok)
-	}
-}
-
 func TestNewID_UniqueUnderConcurrency(t *testing.T) {
 	// Two attempts minted in the same clock tick must not share an id: the id
 	// names the recording, so a collision would overwrite one attempt's audio.

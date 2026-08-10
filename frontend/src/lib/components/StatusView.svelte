@@ -2,8 +2,10 @@
   import { onMount, onDestroy } from 'svelte'
   import { status, appState } from '../stores'
   import { GetStatus, EventsOn, GetPermissions, OpenAccessibilitySettings, OpenMicrophoneSettings } from '../api'
+  import type { TranscriptionEvent } from '../api'
 
   let lastTranscription = $state('')
+  let lastSuspected = $state(false)
   let accessibilityOk = $state(false)
   let microphoneOk = $state(false)
   let cleanupTranscriptionEvent: (() => void) | undefined
@@ -49,8 +51,9 @@
       refreshPermissions()
     }, 2000)
 
-    cleanupTranscriptionEvent = EventsOn('transcription', (data: { raw: string; cleaned: string }) => {
+    cleanupTranscriptionEvent = EventsOn<TranscriptionEvent>('transcription', (data) => {
       lastTranscription = data.cleaned || data.raw
+      lastSuspected = data.suspected
     })
   })
 
@@ -125,7 +128,17 @@
 
   {#if lastTranscription}
     <div class="transcription-card">
-      <span class="info-label">Last Transcription</span>
+      <div class="transcription-header">
+        <span class="info-label">Last Transcription</span>
+        {#if lastSuspected}
+          <span
+            class="suspected-badge"
+            title="The transcript matched a known Whisper-hallucination pattern. It was inserted anyway — double-check it."
+          >
+            check text
+          </span>
+        {/if}
+      </div>
       <p class="transcription-text">{lastTranscription}</p>
     </div>
   {/if}
@@ -315,6 +328,21 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+  }
+
+  .transcription-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .suspected-badge {
+    font-size: 10px;
+    padding: 1px 6px;
+    border: 1px solid color-mix(in srgb, var(--yellow) 45%, var(--border));
+    border-radius: 4px;
+    color: var(--yellow);
   }
 
   .transcription-text {

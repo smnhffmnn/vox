@@ -16,8 +16,10 @@ func TestIsHallucination(t *testing.T) {
 		in   string
 		want bool
 	}{
-		{"empty string", "", true},
-		{"only whitespace", "   \t\n", true},
+		// Empty text is not a hallucination — the pipeline handles it as
+		// errNoSpeech before the pattern check ever runs.
+		{"empty string", "", false},
+		{"only whitespace", "   \t\n", false},
 		{"plain German sentence", "Das ist ein normaler Satz.", false},
 		{"plain English sentence", "This is a regular transcription.", false},
 		{"untertitel exact", "Untertitel", true},
@@ -53,6 +55,16 @@ func TestIsHallucination(t *testing.T) {
 		// dictation content and must pass through.
 		{"url mid-sentence is fine", "Die Webseite www.mein-blog.de steht dort.", false},
 		{"url is not 'www' prefixed is fine", "Die Domain foo.de gehört uns, mehr nicht.", false},
+		// Known-fuzzy matches (VOX-11): ordinary dictation that the substring
+		// patterns hit — "vielen dank f", "bis zum n", and "abonniert den" via
+		// stripNonLetters merging across punctuation and dropping umlauts. They
+		// are pinned here as `true` to document the fuzziness, which is tolerable
+		// only because a match marks the transcript instead of dropping it.
+		{"known-fuzzy: vielen dank für die Info", "Vielen Dank für die Info, ich schaue mir das nachher an", true},
+		{"known-fuzzy: bis zum nächsten Sprint", "Wir verschieben das bis zum nächsten Sprint", true},
+		{"known-fuzzy: bis zum Nachmittag", "Das machen wir bis zum Nachmittag fertig.", true},
+		{"known-fuzzy: abonniert, den across comma", "Ich habe die Zeitung abonniert, den Rest klären wir morgen.", true},
+		{"known-fuzzy: bis zum Notartermin", "Bis zum Notartermin brauchen wir die Unterschrift.", true},
 	}
 
 	for _, tt := range tests {
@@ -219,7 +231,7 @@ func TestStepOf(t *testing.T) {
 func TestPipelineErrf_PreservesWrappedSentinels(t *testing.T) {
 	err := pipelineErrf(logbuf.StepSTT, "%w", errNoSpeech)
 	if !errors.Is(err, errNoSpeech) {
-		t.Error("pipelineErrf must keep a wrapped sentinel matchable — the pipeline drops the recording based on it")
+		t.Error("pipelineErrf must keep a wrapped sentinel matchable")
 	}
 	if stepOf(err, logbuf.StepApp) != logbuf.StepSTT {
 		t.Error("step lost")

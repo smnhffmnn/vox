@@ -15,6 +15,7 @@ var (
 const (
 	mbOK       = 0x00000000
 	mbIconInfo = 0x00000040
+	mbIconWarn = 0x00000030
 )
 
 // PlayStart plays the recording-start sound in the background.
@@ -25,6 +26,11 @@ func PlayStart() {
 // PlayStop plays the recording-stop sound in the background.
 func PlayStop() {
 	go messageBeep.Call(uintptr(mbIconInfo))
+}
+
+// PlayCancel plays the recording-discarded sound in the background.
+func PlayCancel() {
+	go messageBeep.Call(uintptr(mbIconWarn))
 }
 
 // PlayHandsfreeStart plays a double beep to indicate hands-free mode activation.
