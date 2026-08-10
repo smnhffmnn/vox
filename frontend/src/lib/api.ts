@@ -53,6 +53,11 @@ export interface HistoryEntry {
   status: EntryStatus
   failed_step: string
   error_message: string
+  /**
+   * The transcript matched a known Whisper-hallucination pattern. It was
+   * delivered and stored anyway — this is a hint to double-check the text.
+   */
+  suspected_hallucination: boolean
   /** Recording still on disk — audio is kept for the newest entries only. */
   has_audio: boolean
 }
@@ -149,6 +154,14 @@ export {
 export interface StateChangedEvent {
   state: string
   started_at?: number
+}
+
+/** Emitted after a dictation was delivered. */
+export interface TranscriptionEvent {
+  raw: string
+  cleaned: string
+  /** The transcript matched a hallucination pattern — worth a second look. */
+  suspected: boolean
 }
 
 // Events helper using Wails v3 runtime

@@ -53,6 +53,12 @@ type Entry struct {
 	FailedStep   string `json:"failed_step,omitempty"`
 	ErrorMessage string `json:"error_message,omitempty"`
 
+	// SuspectedHallucination marks a transcript that matched a known Whisper-
+	// hallucination pattern. The text was delivered and stored anyway — the
+	// patterns are fuzzy and real dictation must never be lost to a false
+	// alarm — so this is a review hint, not a failure.
+	SuspectedHallucination bool `json:"suspected_hallucination,omitempty"`
+
 	// AudioFile is the recording's basename inside the recordings directory.
 	// The file may already be gone — audio is kept only for the newest
 	// entries — so presence of the field does not imply presence of the file.
@@ -257,32 +263,6 @@ func (h *History) StoreAudio(entryID, tmpPath string) (name string, path string,
 	}
 	_ = os.Remove(tmpPath)
 	return name, dst, nil
-}
-
-// DropAudio deletes an entry's recording and clears the reference, for attempts
-// that are not worth a retention slot — re-transcribing silence fails the same
-// way, and keeping it would evict the audio of a failure the user does want to
-// retry.
-func (h *History) DropAudio(id string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	for i := range h.entries {
-		if h.entries[i].ID != id {
-			continue
-		}
-		if name := safeAudioName(h.entries[i].AudioFile); name != "" && h.audioDir != "" {
-			// Skip a recording a retry is currently reading, as pruning does:
-			// the reference is cleared regardless, so the file becomes an orphan
-			// and is cleaned at the next startup once the hold is gone.
-			if _, held := h.inUse[name]; !held {
-				_ = os.Remove(filepath.Join(h.audioDir, name))
-			}
-		}
-		h.entries[i].AudioFile = ""
-		_ = h.writeAll()
-		return
-	}
 }
 
 // AdoptPending turns entries left in the pending state into failed ones. Called

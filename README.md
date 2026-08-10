@@ -147,7 +147,7 @@ internal/
 ├── audio/            Audio recording (malgo/miniaudio — native on all platforms)
 ├── cleanup/          LLM text cleanup with context-aware tone
 ├── config/           YAML config, dictionary, snippets, custom prompts
-├── feedback/         Audio feedback (start/stop/handsfree sounds)
+├── feedback/         Audio feedback (start/stop/cancel/handsfree sounds)
 ├── history/          JSONL dictation history + audio retention
 ├── hotkey/           Global hotkey (NSEvent/evdev/SetWindowsHookEx)
 ├── inject/           Text output (clipboard/keystroke injection)
@@ -224,7 +224,7 @@ Run through this list on each target platform. Items marked _(platform)_ apply o
 ### Audio
 
 - [ ] Default microphone is used; switching the system default between sessions picks up the new device.
-- [ ] Audio feedback sounds (start/stop/hands-free) play when enabled and stay silent when disabled.
+- [ ] Audio feedback sounds (start/stop/cancel/hands-free) play when enabled and stay silent when disabled — ESC and a short tap play the distinct cancel sound, not the stop sound.
 - [ ] Output device does not switch to Bluetooth during recording (regression guard for `NoFixedSizedCallback` / `FormatUnknown`).
 - [ ] Plugging/unplugging a USB/Bluetooth mic between recordings does not crash the app.
 
@@ -250,14 +250,14 @@ Run through this list on each target platform. Items marked _(platform)_ apply o
 Force each failure and confirm the recording behaves as described. An STT or insert failure
 marks the attempt **failed** and keeps the WAV in `~/.config/vox/recordings/` so it can be
 transcribed again. A cleanup failure is not fatal — the raw text is used and the attempt is
-stored as a normal success. Silence, ESC and `audio_keep: 0` are the cases where no recording
+stored as a normal success. ESC and `audio_keep: 0` are the only cases where no recording
 is meant to survive.
 
 - [ ] Wrong API key → attempt fails at the STT step, banner names it, `Try again → clipboard` recovers the text after fixing the key.
 - [ ] Airplane mode / no network → same, and the recording is still there.
 - [ ] Injection failure (no focused target, or the injection backend unavailable) → the attempt is marked failed at the insert step, no success notification fires, and the banner still offers the transcribed text for the clipboard.
 - [ ] Cleanup backend unreachable → the attempt still succeeds with the raw text, and a warning shows live in Diagnostics.
-- [ ] Silence only → "no speech detected" is recorded as a failed attempt, and the recording is discarded on purpose (re-transcribing silence yields the same result), so the row offers no retry.
+- [ ] Silence only (empty transcription) → "no speech detected" is recorded as a failed attempt, but the WAV is kept — an empty result can be the backend's fault — so the row offers a retry like any other failure.
 - [ ] ESC during recording → recording is discarded on purpose; no history entry, no leftover WAV.
 - [ ] Kill the app during transcription → the entry is in `history.jsonl` as `pending` and the WAV survives; the next start turns it into a failed attempt that can be transcribed again.
 - [ ] Set `audio_keep: 0`, dictate → no file appears in `recordings/` at any point, and the history offers no retry.
@@ -268,6 +268,7 @@ is meant to survive.
 - [ ] Settings window opens from the tray menu and persists changes after restart.
 - [ ] Dark / light mode follows the system setting and updates live when the OS theme changes.
 - [ ] History view lists entries newest first, and the search box filters over raw text, polished text, app context and error message.
+- [ ] A transcript matching a Whisper-hallucination pattern (e.g. dictate "Vielen Dank fürs Zuschauen") is still inserted at the cursor and stored; its history row shows the yellow "check text" badge.
 - [ ] History rows of the newest `audio_keep` entries offer Play, Re-transcribe, Download and Reveal; older rows offer only the copy actions.
 - [ ] Re-transcribe on a stored recording replaces the entry's text without a new recording.
 - [ ] `Reveal history.jsonl` opens the file manager — _(macOS/Windows)_ with the file selected, _(Linux)_ at the containing directory.

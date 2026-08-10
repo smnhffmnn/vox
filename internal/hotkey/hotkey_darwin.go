@@ -23,9 +23,12 @@ import (
 )
 
 // modifierStartDelay is the window during which a modifier-hotkey press can be
-// cancelled by another key press (e.g. Option+L = @ on DE layout). See mission
-// card 005_tdd-modifier-aware-delay / vox-open-issues.md issue 5.
-const modifierStartDelay = 50 * time.Millisecond
+// cancelled by another key press (e.g. Option+L = @ on DE layout). 150ms
+// because the second key of a combo typically lands 80–200ms after the
+// modifier — the original 50ms fired before it arrived, so Option+L still
+// started a recording (VOX-1). The price is that every modifier-hotkey
+// recording starts 150ms after the press.
+const modifierStartDelay = 150 * time.Millisecond
 
 var (
 	mu         sync.Mutex
