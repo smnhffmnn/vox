@@ -23,6 +23,12 @@ type Config struct {
 	AudioFeedback    bool
 	ShowOverlay      bool
 
+	// VAD gates uploads on a local energy check: recordings without any
+	// detected speech fail before the upload (retry transcribes them anyway),
+	// and a silent first Whisper window drops the dictionary prompt. Off
+	// switches both checks off.
+	VAD bool
+
 	// Retention
 	HistorySize int // Number of history entries whose text is kept
 	AudioKeep   int // Number of newest entries whose recording is kept on disk
@@ -58,6 +64,7 @@ func DefaultConfig() *Config {
 		Notifications:    true,
 		AudioFeedback:    true,
 		ShowOverlay:      true,
+		VAD:              true,
 		HistorySize:      1000,
 		AudioKeep:        30,
 		STTBackend:       "openai",
@@ -119,6 +126,7 @@ func (cfg *Config) Save() error {
 	b.WriteString(fmt.Sprintf("notifications: %v\n", cfg.Notifications))
 	b.WriteString(fmt.Sprintf("audio_feedback: %v\n", cfg.AudioFeedback))
 	b.WriteString(fmt.Sprintf("show_overlay: %v\n", cfg.ShowOverlay))
+	b.WriteString(fmt.Sprintf("vad: %v\n", cfg.VAD))
 	b.WriteString("\n# Retention\n")
 	b.WriteString(fmt.Sprintf("history_size: %d\n", cfg.HistorySize))
 	b.WriteString(fmt.Sprintf("audio_keep: %d\n", cfg.AudioKeep))
@@ -178,6 +186,8 @@ func parseConfig(data string, cfg *Config) {
 			cfg.AudioFeedback = value == "true"
 		case "show_overlay":
 			cfg.ShowOverlay = value == "true"
+		case "vad":
+			cfg.VAD = value == "true"
 		case "history_size":
 			if v, err := strconv.Atoi(value); err == nil && v > 0 {
 				cfg.HistorySize = v

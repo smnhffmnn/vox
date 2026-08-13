@@ -28,6 +28,7 @@ import (
 	"github.com/smnhffmnn/vox/internal/openpath"
 	"github.com/smnhffmnn/vox/internal/permissions"
 	"github.com/smnhffmnn/vox/internal/stt"
+	"github.com/smnhffmnn/vox/internal/vad"
 	"github.com/smnhffmnn/vox/internal/windowctx"
 )
 
@@ -498,7 +499,9 @@ func (a *App) RetryEntry(id string, toClipboard bool) RetryResult {
 
 	present := a.hist.StoredAudio()
 
-	tr, err := a.transcribeAndCleanup(audioPath, wctx)
+	// No vadGate: a retry is the user explicitly asking to transcribe this
+	// recording — the level check must not stand between them and their audio.
+	tr, err := a.transcribeAndCleanup(audioPath, wctx, transcribeOpts{})
 	if err != nil {
 		step := stepOf(err, logbuf.StepSTT)
 		logbuf.Errorf(step, "retry failed: %s", redactURLCredentials(err.Error()))
@@ -1239,7 +1242,7 @@ func (a *App) handleStopAndProcess(rec *audio.Recording, gen uint64) {
 	// would be swept up as an orphan after a crash.
 	a.addEntry(entry)
 
-	tr, err := a.transcribeAndCleanup(audioPath, wctx)
+	tr, err := a.transcribeAndCleanup(audioPath, wctx, transcribeOpts{vadGate: true})
 	release()
 	if err != nil {
 		step := stepOf(err, logbuf.StepSTT)
@@ -1445,7 +1448,16 @@ func (a *App) notifyInsufficientCredits() {
 	}
 }
 
-func (a *App) transcribeAndCleanup(audioFile string, ctx *windowctx.Context) (transcriptionResult, error) {
+// transcribeOpts control the checks around a transcription.
+type transcribeOpts struct {
+	// vadGate fails a recording without detected speech before the upload.
+	// Only fresh dictations set it: a retry is the user explicitly asking to
+	// transcribe THIS recording, and the CLI transcribes whatever file it is
+	// given — the gate is the safety valve's counterpart, not a hard rule.
+	vadGate bool
+}
+
+func (a *App) transcribeAndCleanup(audioFile string, ctx *windowctx.Context, opts transcribeOpts) (transcriptionResult, error) {
 	a.cfg.RLock()
 	sttBackend := a.cfg.STTBackend
 	sttURL := a.cfg.STTURL
@@ -1455,6 +1467,7 @@ func (a *App) transcribeAndCleanup(audioFile string, ctx *windowctx.Context) (tr
 	llmModel := a.cfg.LLMModel
 	lang := a.cfg.Language
 	raw := a.cfg.Raw
+	vadEnabled := a.cfg.VAD
 	a.cfg.RUnlock()
 
 	apiKey := a.resolveAPIKey()
@@ -1471,6 +1484,30 @@ func (a *App) transcribeAndCleanup(audioFile string, ctx *windowctx.Context) (tr
 	a.dataMu.RUnlock()
 
 	whisperPrompt := buildWhisperPrompt(dictionary, lang)
+
+	// Local level check before anything leaves the machine (VOX-4). Whisper
+	// invents text over silence, so a recording without any detected speech
+	// fails here — kept and retryable like every failure, and the retry
+	// deliberately skips this gate. Independent of the gate, a silent first
+	// transcription window means the prompt has no audio to attach to: the
+	// model would continue the prompt itself, which is exactly how the
+	// dictionary once became a hundred "SEPA," repetitions (VOX-12).
+	if vadEnabled {
+		if an, vadErr := vad.AnalyzeFile(audioFile); vadErr != nil {
+			// The check is an optimization, never a reason to lose a dictation.
+			logbuf.Warnf(logbuf.StepSTT, "voice-activity check failed — uploading anyway: %v", vadErr)
+		} else {
+			if opts.vadGate && !an.HasSpeech() {
+				return transcriptionResult{}, pipelineErrf(logbuf.StepSTT,
+					"%w — level check before upload found no speech (%.1fs audio); the recording is kept, a retry uploads it anyway", errNoSpeech, an.DurationSeconds)
+			}
+			if whisperPrompt != "" && an.FirstWindowSilent() {
+				logbuf.Warnf(logbuf.StepSTT, "first transcription window is silent (%.1fs leading silence) — sending no prompt so the model has no pattern to continue", an.LeadingSilenceSeconds)
+				whisperPrompt = ""
+			}
+		}
+	}
+
 	transcriber := stt.NewTranscriber(sttBackend, apiKey, sttURL, sttModel)
 	sttRes, err := transcriber.Transcribe(audioFile, lang, whisperPrompt)
 	if err != nil {
