@@ -1,14 +1,9 @@
 package stt
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/smnhffmnn/vox/internal/apierr"
@@ -37,76 +32,55 @@ func NewOpenAI(apiKey, model string) *OpenAI {
 	}
 }
 
-type whisperResponse struct {
-	Text string `json:"text"`
-}
+// supportsVerboseJSON reports whether the model can return verbose_json with
+// timestamped segments (VOX-13). Only whisper-1 does — the gpt-4o transcribe
+// models reject the format, so they keep the default and return text only.
+func supportsVerboseJSON(model string) bool { return model == "whisper-1" }
 
-func (o *OpenAI) Transcribe(audioFile, language, prompt string) (string, error) {
-	f, err := os.Open(audioFile)
+func (o *OpenAI) Transcribe(audioFile, language, prompt string) (Result, error) {
+	fields := [][2]string{
+		{"model", o.model},
+		// Issue 9: hard-set temperature=0 to minimise Whisper hallucinations on
+		// silent/leise audio. Supported by whisper-1 and the gpt-4o-* transcribe
+		// models; omitting it lets the server fall back to a non-zero default.
+		{"temperature", "0"},
+		{"language", language},
+		{"prompt", prompt},
+	}
+	if supportsVerboseJSON(o.model) {
+		fields = append(fields, [2]string{"response_format", "verbose_json"})
+	}
+
+	buf, contentType, err := buildRequestBody(audioFile, fields)
 	if err != nil {
-		return "", fmt.Errorf("open audio file: %w", err)
+		return Result{}, err
 	}
-	defer f.Close()
 
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
-
-	// Audio file
-	part, err := w.CreateFormFile("file", filepath.Base(audioFile))
+	req, err := http.NewRequest("POST", o.baseURL+"/v1/audio/transcriptions", buf)
 	if err != nil {
-		return "", err
-	}
-	if _, err := io.Copy(part, f); err != nil {
-		return "", err
-	}
-
-	w.WriteField("model", o.model)
-
-	// Issue 9: hard-set temperature=0 to minimise Whisper hallucinations on
-	// silent/leise audio. Supported by whisper-1 and the gpt-4o-* transcribe
-	// models; omitting it lets the server fall back to a non-zero default.
-	w.WriteField("temperature", "0")
-
-	if language != "" {
-		w.WriteField("language", language)
-	}
-
-	if prompt != "" {
-		w.WriteField("prompt", prompt)
-	}
-
-	w.Close()
-
-	req, err := http.NewRequest("POST", o.baseURL+"/v1/audio/transcriptions", &buf)
-	if err != nil {
-		return "", err
+		return Result{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+o.apiKey)
-	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("Content-Type", contentType)
 
 	client := &http.Client{Timeout: 10 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("OpenAI API request: %w", err)
+		return Result{}, fmt.Errorf("OpenAI API request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20)) // 10 MB limit
 	if err != nil {
-		return "", fmt.Errorf("read response: %w", err)
+		return Result{}, fmt.Errorf("read response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		if apierr.IsInsufficientCredits(resp.StatusCode, body) {
-			return "", fmt.Errorf("OpenAI API error (%d): %w: %s", resp.StatusCode, apierr.ErrInsufficientCredits, string(body))
+			return Result{}, fmt.Errorf("OpenAI API error (%d): %w: %s", resp.StatusCode, apierr.ErrInsufficientCredits, string(body))
 		}
-		return "", fmt.Errorf("OpenAI API error (%d): %s", resp.StatusCode, string(body))
+		return Result{}, fmt.Errorf("OpenAI API error (%d): %s", resp.StatusCode, string(body))
 	}
 
-	var result whisperResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("response parse: %w", err)
-	}
-
-	return result.Text, nil
+	return parseTranscription(body)
 }

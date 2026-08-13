@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/smnhffmnn/vox/internal/cleanup"
 	"github.com/smnhffmnn/vox/internal/config"
@@ -19,6 +18,11 @@ type TranscribeResult struct {
 	Text     string `json:"text"`
 	Language string `json:"language"`
 	Backend  string `json:"backend"`
+	// Segments are the raw transcript's timestamped spans when the backend
+	// provided them (whisper-1). They describe the STT output, not the
+	// cleaned text — that is what makes them useful for diagnosing gaps and
+	// hallucinations against the audio.
+	Segments []stt.Segment `json:"segments,omitempty"`
 }
 
 func runTranscribe(args []string) int {
@@ -90,17 +94,19 @@ func runTranscribe(args []string) int {
 		return 1
 	}
 
-	// Load dictionary for Whisper prompt
+	// Load dictionary for Whisper prompt. Shaped like the app's prompt — the
+	// raw comma join was a repetition-hallucination seed (VOX-12).
 	dictionary, _ := config.LoadDictionary()
-	whisperPrompt := strings.Join(dictionary, ", ")
+	whisperPrompt := buildWhisperPrompt(dictionary, language)
 
 	// Transcribe
 	transcriber := stt.NewTranscriber(sttBackend, key, sttServerURL, cfg.STTModel)
-	text, err := transcriber.Transcribe(*file, language, whisperPrompt)
+	res, err := transcriber.Transcribe(*file, language, whisperPrompt)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "vox transcribe: %v\n", err)
 		return 1
 	}
+	text := res.Text
 
 	// LLM cleanup (default: on, --raw disables)
 	if !*raw {
@@ -131,6 +137,7 @@ func runTranscribe(args []string) int {
 			Text:     text,
 			Language: language,
 			Backend:  sttBackend,
+			Segments: res.Segments,
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetEscapeHTML(false)

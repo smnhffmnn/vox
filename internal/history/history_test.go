@@ -962,3 +962,60 @@ func TestStoredAudioAndHasAudio(t *testing.T) {
 		t.Error("an escaping reference must never count as audio")
 	}
 }
+
+// TestSegments_PersistAcrossReload pins the VOX-13 storage contract: segments
+// written with an entry survive the JSONL round trip, and entries without the
+// field — everything written before it existed — load as segment-less instead
+// of failing.
+func TestSegments_PersistAcrossReload(t *testing.T) {
+	home := setHome(t)
+
+	h := NewHistory(10, 10)
+	e := sampleEntry("mit segmenten")
+	e.Segments = []Segment{
+		{Start: 0.0, End: 1.8, Text: "Guten Morgen."},
+		{Start: 2.6, End: 4.2, Text: " Bis später."},
+	}
+	if err := h.Add(e); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	// A legacy line without the segments field, as older versions wrote it.
+	legacy := `{"id":"legacy-1","timestamp":"2026-04-15T12:00:00Z","language":"de","raw_text":"alt","cleaned_text":"alt","app_context":"test","duration_seconds":1,"backend":"whisper"}` + "\n"
+	path := filepath.Join(home, ".config", "vox", "history.jsonl")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("open history file: %v", err)
+	}
+	if _, err := f.WriteString(legacy); err != nil {
+		t.Fatalf("append legacy line: %v", err)
+	}
+	f.Close()
+
+	reloaded := NewHistory(10, 10)
+	entries := reloaded.Entries()
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries after reload, want 2", len(entries))
+	}
+
+	var withSegments, legacyEntry *Entry
+	for i := range entries {
+		if entries[i].RawText == "mit segmenten" {
+			withSegments = &entries[i]
+		}
+		if entries[i].RawText == "alt" {
+			legacyEntry = &entries[i]
+		}
+	}
+	if withSegments == nil || legacyEntry == nil {
+		t.Fatalf("entries after reload: %+v", entries)
+	}
+	if len(withSegments.Segments) != 2 ||
+		withSegments.Segments[0] != (Segment{Start: 0.0, End: 1.8, Text: "Guten Morgen."}) ||
+		withSegments.Segments[1] != (Segment{Start: 2.6, End: 4.2, Text: " Bis später."}) {
+		t.Errorf("segments after reload = %v", withSegments.Segments)
+	}
+	if legacyEntry.Segments != nil {
+		t.Errorf("legacy entry segments = %v, want nil", legacyEntry.Segments)
+	}
+}
