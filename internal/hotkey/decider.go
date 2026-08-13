@@ -104,11 +104,16 @@ func (s *startDecider) fire() {
 }
 
 // hotkeyUp is called when the target hotkey is released.
-//   - cancelled=true: a pending start was cancelled (release came within delay).
-//     The caller should NOT propagate a release event — no start ever fired.
-//   - wasStarted=true: a prior start had fired. The caller SHOULD propagate the
-//     release event.
-//   - both false: spurious release (no prior down). No-op.
+//   - cancelled=true: the release arrived within the delay window and no other
+//     key intervened — a bare tap. No start has fired; the caller should
+//     deliver the suppressed press together with this release, in order.
+//     Swallowing the pair makes tap-driven modes dead: in toggle mode the
+//     release is what starts and stops the recording (VOX-16).
+//   - wasStarted=true: a prior start had fired. The caller should deliver the
+//     release on its own.
+//   - both false: spurious release (no prior down), or the window was already
+//     cancelled by another key (combo typing such as Option+L, VOX-1). Nothing
+//     may be delivered — that release belongs to typing, not to the hotkey.
 func (s *startDecider) hotkeyUp() (cancelled bool, wasStarted bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
