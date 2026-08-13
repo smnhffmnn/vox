@@ -64,22 +64,40 @@ func goHotkeyDown() {
 func goHotkeyUp() {
 	mu.Lock()
 	d := decider
-	f := onReleaseF
+	press := onPressF
+	release := onReleaseF
 	mu.Unlock()
 	if d != nil {
-		_, wasStarted := d.hotkeyUp()
-		if !wasStarted {
-			// Release within the delay window, or no start ever fired —
-			// do not propagate a release that has no matching start.
-			return
-		}
-		if f != nil {
-			go f()
+		cancelled, wasStarted := d.hotkeyUp()
+		switch {
+		case wasStarted:
+			if release != nil {
+				go release()
+			}
+		case cancelled:
+			// Bare tap: released within the delay window with no other key in
+			// between. The press is still pending, so deliver press and
+			// release together, in order — in toggle mode the release is what
+			// starts and stops the recording, so swallowing it made sub-150ms
+			// taps dead (VOX-16). One goroutine for the pair: two separate
+			// `go` statements would leave the order to the scheduler.
+			go func() {
+				if press != nil {
+					press()
+				}
+				if release != nil {
+					release()
+				}
+			}()
+		default:
+			// Release after an otherKey cancel (combo typing such as
+			// Option+L, VOX-1) or without a matching press — that release
+			// belongs to typing, not to the hotkey.
 		}
 		return
 	}
-	if f != nil {
-		go f()
+	if release != nil {
+		go release()
 	}
 }
 
