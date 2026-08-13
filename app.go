@@ -1450,7 +1450,7 @@ func (a *App) transcribeAndCleanup(audioFile string, ctx *windowctx.Context) (tr
 	customPrompts := a.customPrompts
 	a.dataMu.RUnlock()
 
-	whisperPrompt := strings.Join(dictionary, ", ")
+	whisperPrompt := buildWhisperPrompt(dictionary, lang)
 	transcriber := stt.NewTranscriber(sttBackend, apiKey, sttURL, sttModel)
 	rawText, err := transcriber.Transcribe(audioFile, lang, whisperPrompt)
 	if err != nil {
@@ -1568,6 +1568,65 @@ func isHallucination(text string) bool {
 		}
 	}
 	return false
+}
+
+// buildWhisperPrompt turns the dictionary into the Whisper prompt. The prompt
+// is not an instruction field but decoder context that the model continues,
+// so its shape matters more than its wording:
+//
+//   - Entries that are a prefix of another entry are dropped. "SEPA,
+//     SEPA-Lastschrift" is a self-repetition seed: over a silent first window
+//     the model continued the pattern and filled the transcript with over a
+//     hundred "SEPA," repetitions, eating the first ~36s of real speech
+//     (VOX-12). The longer entry biases the vocabulary for both.
+//   - The terms are wrapped in a sentence closed with a period, so the most
+//     natural continuation is running text rather than another list item.
+func buildWhisperPrompt(dictionary []string, lang string) string {
+	terms := dropPrefixEntries(dictionary)
+	if len(terms) == 0 {
+		return ""
+	}
+	intro := "Technical terms: "
+	if lang == "de" {
+		intro = "Fachbegriffe: "
+	}
+	return intro + strings.Join(terms, ", ") + "."
+}
+
+// dropPrefixEntries returns the dictionary without blanks, without
+// case-insensitive duplicates, and without entries that are a case-insensitive
+// prefix of another entry. Order is preserved.
+func dropPrefixEntries(entries []string) []string {
+	trimmed := make([]string, len(entries))
+	lowered := make([]string, len(entries))
+	for i, e := range entries {
+		trimmed[i] = strings.TrimSpace(e)
+		lowered[i] = strings.ToLower(trimmed[i])
+	}
+	var kept []string
+	for i := range entries {
+		if lowered[i] == "" {
+			continue
+		}
+		drop := false
+		for j := range entries {
+			if i == j || lowered[j] == "" {
+				continue
+			}
+			if len(lowered[j]) > len(lowered[i]) && strings.HasPrefix(lowered[j], lowered[i]) {
+				drop = true // a longer entry starts with this one
+				break
+			}
+			if j < i && lowered[j] == lowered[i] {
+				drop = true // duplicate, the first occurrence is kept
+				break
+			}
+		}
+		if !drop {
+			kept = append(kept, trimmed[i])
+		}
+	}
+	return kept
 }
 
 func stripNonLetters(s string) string {

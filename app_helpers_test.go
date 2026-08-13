@@ -237,3 +237,93 @@ func TestPipelineErrf_PreservesWrappedSentinels(t *testing.T) {
 		t.Error("step lost")
 	}
 }
+
+// TestBuildWhisperPrompt pins the VOX-12 contract: the prompt is decoder
+// context that the model continues, so it must not look like a list that
+// invites more list items, and it must not contain self-repetition seeds.
+// "SEPA, SEPA-Lastschrift" in the prompt turned a recording with a silent
+// first window into a hundred "SEPA," repetitions that ate ~36s of speech.
+func TestBuildWhisperPrompt(t *testing.T) {
+	tests := []struct {
+		name string
+		dict []string
+		lang string
+		want string
+	}{
+		{
+			name: "empty dictionary yields no prompt",
+			dict: nil,
+			lang: "de",
+			want: "",
+		},
+		{
+			name: "prefix pair keeps only the longer entry (the incident case)",
+			dict: []string{"SEPA", "SEPA-Lastschrift"},
+			lang: "de",
+			want: "Fachbegriffe: SEPA-Lastschrift.",
+		},
+		{
+			name: "prefix detection is case-insensitive",
+			dict: []string{"sepa", "SEPA-Lastschrift"},
+			lang: "de",
+			want: "Fachbegriffe: SEPA-Lastschrift.",
+		},
+		{
+			name: "order of unrelated terms is preserved",
+			dict: []string{"Naskor", "MYFIT24", "Tegelen"},
+			lang: "de",
+			want: "Fachbegriffe: Naskor, MYFIT24, Tegelen.",
+		},
+		{
+			name: "non-German language gets the English intro",
+			dict: []string{"Naskor"},
+			lang: "en",
+			want: "Technical terms: Naskor.",
+		},
+		{
+			name: "sentence ends with exactly one period",
+			dict: []string{"Naskor", "YouTrack"},
+			lang: "",
+			want: "Technical terms: Naskor, YouTrack.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := buildWhisperPrompt(tt.dict, tt.lang); got != tt.want {
+				t.Errorf("buildWhisperPrompt(%v, %q) = %q, want %q", tt.dict, tt.lang, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDropPrefixEntries(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"nil stays nil", nil, nil},
+		{"blanks are dropped", []string{"", "  ", "Naskor"}, []string{"Naskor"}},
+		{"prefix pair keeps the longer", []string{"SEPA", "SEPA-Lastschrift"}, []string{"SEPA-Lastschrift"}},
+		{"order of pair does not matter", []string{"SEPA-Lastschrift", "SEPA"}, []string{"SEPA-Lastschrift"}},
+		{"chain keeps only the longest", []string{"SE", "SEPA", "SEPA-Lastschrift"}, []string{"SEPA-Lastschrift"}},
+		{"exact duplicates keep the first", []string{"Naskor", "naskor"}, []string{"Naskor"}},
+		{"entries are trimmed", []string{" Naskor "}, []string{"Naskor"}},
+		{"substring in the middle is not a prefix", []string{"Fit", "MYFIT24"}, []string{"Fit", "MYFIT24"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := dropPrefixEntries(tt.in)
+			if len(got) != len(tt.want) {
+				t.Fatalf("dropPrefixEntries(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("dropPrefixEntries(%v) = %v, want %v", tt.in, got, tt.want)
+				}
+			}
+		})
+	}
+}
