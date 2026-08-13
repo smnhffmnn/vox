@@ -55,7 +55,7 @@ func TestTranscribeAndCleanup_MarksInsteadOfDropping(t *testing.T) {
 			}
 
 			a := &App{cfg: cfg}
-			tr, err := a.transcribeAndCleanup(audioFile, nil)
+			tr, err := a.transcribeAndCleanup(audioFile, nil, transcribeOpts{})
 
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
@@ -101,7 +101,7 @@ func TestTranscribeAndCleanup_CarriesSegments(t *testing.T) {
 	}
 
 	a := &App{cfg: cfg}
-	tr, err := a.transcribeAndCleanup(audioFile, nil)
+	tr, err := a.transcribeAndCleanup(audioFile, nil, transcribeOpts{})
 	if err != nil {
 		t.Fatalf("transcribeAndCleanup: %v", err)
 	}
