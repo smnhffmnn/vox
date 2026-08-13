@@ -126,6 +126,7 @@ doubletap_window: 250
 notifications: false
 audio_feedback: false
 show_overlay: false
+vad: false
 history_size: 250
 audio_keep: 5
 stt_backend: local
@@ -167,6 +168,9 @@ llm_model: qwen2.5:7b
 	}
 	if cfg.ShowOverlay {
 		t.Errorf("ShowOverlay = %v, want false", cfg.ShowOverlay)
+	}
+	if cfg.VAD {
+		t.Errorf("VAD = %v, want false (the opt-out must work)", cfg.VAD)
 	}
 	if cfg.HistorySize != 250 {
 		t.Errorf("HistorySize = %d", cfg.HistorySize)
