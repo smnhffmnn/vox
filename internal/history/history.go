@@ -32,6 +32,14 @@ const (
 // ErrNotFound reports that no entry with the requested id exists.
 var ErrNotFound = errors.New("history entry not found")
 
+// Segment is one timestamped span of the transcript, in seconds from the
+// start of the recording.
+type Segment struct {
+	Start float64 `json:"start"`
+	End   float64 `json:"end"`
+	Text  string  `json:"text"`
+}
+
 // Entry represents a single dictation attempt — successful or not.
 type Entry struct {
 	ID          string    `json:"id"`
@@ -63,6 +71,14 @@ type Entry struct {
 	// The file may already be gone — audio is kept only for the newest
 	// entries — so presence of the field does not imply presence of the file.
 	AudioFile string `json:"audio_file,omitempty"`
+
+	// Segments are the transcript's timestamped spans as the STT backend
+	// reported them — they describe RawText, not CleanedText. Optional:
+	// entries written before the field existed and backends without timing
+	// simply have none. They localize what plain text cannot: whether speech
+	// went missing (a spoken block without a segment), and where a suspected
+	// hallucination sits (its own span, cut exactly).
+	Segments []Segment `json:"segments,omitempty"`
 }
 
 // Failed reports whether the attempt did not produce inserted text.

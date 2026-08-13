@@ -539,6 +539,9 @@ func (a *App) RetryEntry(id string, toClipboard bool) RetryResult {
 	// A retry re-runs the pattern check, so it can set the mark as well as
 	// clear one left by the original attempt.
 	entry.SuspectedHallucination = tr.suspectedHallucination
+	// Same for the segments: they describe the new transcription, and an
+	// empty result replaces stale spans from the original attempt.
+	entry.Segments = historySegments(tr.segments)
 
 	res := RetryResult{OK: true, Persisted: true, Entry: toHistoryEntry(entry, present)}
 
@@ -549,6 +552,7 @@ func (a *App) RetryEntry(id string, toClipboard bool) RetryResult {
 		e.FailedStep = ""
 		e.ErrorMessage = ""
 		e.SuspectedHallucination = entry.SuspectedHallucination
+		e.Segments = entry.Segments
 	}); uerr != nil {
 		if errors.Is(uerr, history.ErrNotFound) {
 			return RetryResult{Error: "history entry disappeared during the retry"}
@@ -1259,6 +1263,7 @@ func (a *App) handleStopAndProcess(rec *audio.Recording, gen uint64) {
 	entry.CleanedText = tr.cleaned
 	entry.Status = history.StatusOK
 	entry.SuspectedHallucination = tr.suspectedHallucination
+	entry.Segments = historySegments(tr.segments)
 
 	// Save before delivering: once the text is on disk it survives a failure or
 	// a crash in the injection step below.
@@ -1408,6 +1413,21 @@ type transcriptionResult struct {
 	// a false alarm on real dictation must never lose it — and the entry is
 	// marked so the user knows to double-check what landed.
 	suspectedHallucination bool
+	// segments are the raw transcript's timestamped spans, when the STT
+	// backend provided them. Diagnostic detail — absence is normal.
+	segments []stt.Segment
+}
+
+// historySegments converts STT segments into their history representation.
+func historySegments(segs []stt.Segment) []history.Segment {
+	if len(segs) == 0 {
+		return nil
+	}
+	out := make([]history.Segment, len(segs))
+	for i, s := range segs {
+		out[i] = history.Segment{Start: s.Start, End: s.End, Text: s.Text}
+	}
+	return out
 }
 
 func (a *App) notifyInsufficientCredits() {
@@ -1452,10 +1472,11 @@ func (a *App) transcribeAndCleanup(audioFile string, ctx *windowctx.Context) (tr
 
 	whisperPrompt := buildWhisperPrompt(dictionary, lang)
 	transcriber := stt.NewTranscriber(sttBackend, apiKey, sttURL, sttModel)
-	rawText, err := transcriber.Transcribe(audioFile, lang, whisperPrompt)
+	sttRes, err := transcriber.Transcribe(audioFile, lang, whisperPrompt)
 	if err != nil {
 		return transcriptionResult{}, pipelineErrf(logbuf.StepSTT, "transcription: %w", err)
 	}
+	rawText := sttRes.Text
 
 	// Empty text is the one outcome that stays a failure: there is nothing to
 	// insert. Anything else goes through — a transcript that merely *looks* like
@@ -1496,6 +1517,7 @@ func (a *App) transcribeAndCleanup(audioFile string, ctx *windowctx.Context) (tr
 		cleaned:                result,
 		cleanupCreditErr:       cleanupCreditErr,
 		suspectedHallucination: suspected,
+		segments:               sttRes.Segments,
 	}, nil
 }
 

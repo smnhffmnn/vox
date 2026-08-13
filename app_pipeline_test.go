@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/smnhffmnn/vox/internal/config"
+	"github.com/smnhffmnn/vox/internal/stt"
 )
 
 // TestTranscribeAndCleanup_MarksInsteadOfDropping pins the VOX-10/VOX-11
@@ -72,5 +73,55 @@ func TestTranscribeAndCleanup_MarksInsteadOfDropping(t *testing.T) {
 				t.Errorf("suspectedHallucination = %v, want %v", tr.suspectedHallucination, tc.wantSuspected)
 			}
 		})
+	}
+}
+
+// TestTranscribeAndCleanup_CarriesSegments pins VOX-13 at the pipeline level:
+// timestamped segments from the STT backend land on the transcription result.
+// They describe the raw transcript, so the cleanup step must not touch them.
+func TestTranscribeAndCleanup_CarriesSegments(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"text":"Guten Morgen. Bis später.","segments":[` +
+			`{"start":0,"end":1.8,"text":"Guten Morgen."},` +
+			`{"start":2.6,"end":4.2,"text":" Bis später."}]}`))
+	}))
+	defer srv.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.STTBackend = "local"
+	cfg.STTURL = srv.URL
+	cfg.Raw = true // the cleanup step is not under test
+	cfg.LLMBackend = "none"
+
+	audioFile := filepath.Join(t.TempDir(), "in.wav")
+	if err := os.WriteFile(audioFile, []byte("RIFF fake"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &App{cfg: cfg}
+	tr, err := a.transcribeAndCleanup(audioFile, nil)
+	if err != nil {
+		t.Fatalf("transcribeAndCleanup: %v", err)
+	}
+
+	want := []stt.Segment{
+		{Start: 0, End: 1.8, Text: "Guten Morgen."},
+		{Start: 2.6, End: 4.2, Text: " Bis später."},
+	}
+	if len(tr.segments) != len(want) {
+		t.Fatalf("segments = %v, want %v", tr.segments, want)
+	}
+	for i := range want {
+		if tr.segments[i] != want[i] {
+			t.Fatalf("segment[%d] = %v, want %v", i, tr.segments[i], want[i])
+		}
+	}
+
+	// And their history form keeps the values as stored on the entry.
+	hs := historySegments(tr.segments)
+	if len(hs) != 2 || hs[0].End != 1.8 || hs[1].Text != " Bis später." {
+		t.Errorf("historySegments = %v", hs)
 	}
 }

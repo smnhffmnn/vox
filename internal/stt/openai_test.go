@@ -103,12 +103,12 @@ func TestOpenAI_Transcribe_SendsCorrectRequest(t *testing.T) {
 	defer srv.Close()
 
 	o := newTestOpenAI("sk-abc123", srv.URL)
-	text, err := o.Transcribe(audioPath, "en", "be concise")
+	res, err := o.Transcribe(audioPath, "en", "be concise")
 	if err != nil {
 		t.Fatalf("Transcribe() err = %v", err)
 	}
-	if text != "hello world" {
-		t.Errorf("text = %q, want %q", text, "hello world")
+	if res.Text != "hello world" {
+		t.Errorf("text = %q, want %q", res.Text, "hello world")
 	}
 
 	if gotPath != "/v1/audio/transcriptions" {

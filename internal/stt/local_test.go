@@ -83,12 +83,12 @@ func TestLocal_Transcribe_SendsCorrectRequest(t *testing.T) {
 	defer srv.Close()
 
 	l := NewLocal(srv.URL)
-	text, err := l.Transcribe(audioPath, "de", "system prompt")
+	res, err := l.Transcribe(audioPath, "de", "system prompt")
 	if err != nil {
 		t.Fatalf("Transcribe() err = %v", err)
 	}
-	if text != "hallo welt" {
-		t.Errorf("text = %q, want %q", text, "hallo welt")
+	if res.Text != "hallo welt" {
+		t.Errorf("text = %q, want %q", res.Text, "hallo welt")
 	}
 
 	if gotPath != "/v1/audio/transcriptions" {
