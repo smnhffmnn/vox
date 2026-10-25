@@ -99,16 +99,23 @@ func runTranscribe(args []string) int {
 		llmURL = *llmURLFlag
 	}
 
-	// Resolve API key. Required whenever OpenAI does the STT or the cleanup;
-	// the desktop pipeline applies the same rule. Without the check, a local
-	// STT run would still post the transcript to api.openai.com for cleanup
-	// — unauthenticated, failing only after the text has left the machine.
-	key, keyErr := lookupAPIKey(*apiKey, os.Getenv, keychain.Get)
+	// Resolve the API key only when OpenAI does the STT or the cleanup — a
+	// local Whisper server and Ollama never see it, and looking it up would
+	// shell out to the OS keychain for nothing. When it is needed, it is
+	// required up front; the desktop pipeline applies the same rule. Without
+	// the check, a local STT run would still post the transcript to
+	// api.openai.com for cleanup — unauthenticated, failing only after the
+	// text has left the machine.
+	var key string
 	sttNeedsKey := sttBackend != "local"
 	llmNeedsKey := !*raw && llmBackend != "none" && llmBackend != "ollama"
-	if key == "" && (sttNeedsKey || llmNeedsKey) {
-		fmt.Fprintf(os.Stderr, "vox transcribe: %v\n", keyErr)
-		return 1
+	if sttNeedsKey || llmNeedsKey {
+		var keyErr error
+		key, keyErr = lookupAPIKey(*apiKey, os.Getenv, keychain.Get)
+		if key == "" {
+			fmt.Fprintf(os.Stderr, "vox transcribe: %v\n", keyErr)
+			return 1
+		}
 	}
 
 	// Load dictionary for Whisper prompt. Shaped like the app's prompt — the
@@ -163,7 +170,10 @@ func runTranscribe(args []string) int {
 //
 // When nothing yields a key, the returned error names the ways that are open
 // on this system. On a headless server the keychain is usually not one of
-// them (no secret-tool), and the hint says so instead of offering it.
+// them (no secret-tool), and the hint says so instead of offering it. A
+// keychain that was there but answered with an error — no Secret Service on
+// the bus, a helper that did not answer in time — is quoted after the hint,
+// so the reason is not lost; the keychain error stays wrapped for errors.Is.
 func lookupAPIKey(flagKey string, getenv func(string) string, keychainGet func(service, key string) (string, error)) (string, error) {
 	if flagKey != "" {
 		return flagKey, nil
@@ -176,7 +186,10 @@ func lookupAPIKey(flagKey string, getenv func(string) string, keychainGet func(s
 		return k, nil
 	}
 	if errors.Is(err, keychain.ErrUnavailable) {
-		return "", fmt.Errorf("no API key — set OPENAI_API_KEY or use -api-key (%v)", err)
+		return "", fmt.Errorf("no API key — set OPENAI_API_KEY or use -api-key (%w)", err)
+	}
+	if err != nil {
+		return "", fmt.Errorf("no API key — set OPENAI_API_KEY, use -api-key, or store it in the OS keychain (%w)", err)
 	}
 	return "", errors.New("no API key — set OPENAI_API_KEY, use -api-key, or store it in the OS keychain")
 }

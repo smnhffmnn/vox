@@ -3,8 +3,6 @@
 package keychain
 
 import (
-	"fmt"
-	"os/exec"
 	"strings"
 )
 
@@ -13,34 +11,23 @@ import (
 const tool = "security"
 
 func get(service, key string) (string, error) {
-	out, err := exec.Command(tool, "find-generic-password", "-s", service, "-a", key, "-w").Output()
+	out, err := run(nil, "find-generic-password", "-s", service, "-a", key, "-w")
 	if err != nil {
-		if missingTool(err) {
-			return "", unavailable(tool)
-		}
-		return "", fmt.Errorf("keychain: key %q not found: %w", key, err)
+		return "", lookupError(key, err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
 
 func set(service, key, value string) error {
-	err := exec.Command(tool, "add-generic-password", "-U", "-s", service, "-a", key, "-w", value).Run()
-	if err != nil {
-		if missingTool(err) {
-			return unavailable(tool)
-		}
-		return fmt.Errorf("keychain: failed to set %q: %w", key, err)
+	if _, err := run(nil, "add-generic-password", "-U", "-s", service, "-a", key, "-w", value); err != nil {
+		return writeError("set", key, err)
 	}
 	return nil
 }
 
 func del(service, key string) error {
-	err := exec.Command(tool, "delete-generic-password", "-s", service, "-a", key).Run()
-	if err != nil {
-		if missingTool(err) {
-			return unavailable(tool)
-		}
-		return fmt.Errorf("keychain: failed to delete %q: %w", key, err)
+	if _, err := run(nil, "delete-generic-password", "-s", service, "-a", key); err != nil {
+		return writeError("delete", key, err)
 	}
 	return nil
 }

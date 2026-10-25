@@ -20,8 +20,8 @@ Cross-platform speech-to-text dictation tool. Press hotkey → speak → text ap
 
 | Platform | Status |
 |----------|--------|
-| macOS (arm64, amd64) | Tested |
-| Linux (Fedora, Wayland/X11) | Supported |
+| macOS (arm64) | Tested — the only macOS build in the releases and in Homebrew; an Intel Mac builds from source |
+| Linux (Fedora, Wayland/X11; amd64, arm64) | Supported — the desktop archives need GTK 3 and WebKitGTK 4.1 at runtime |
 | Linux headless (amd64, arm64) | Supported — `vox transcribe` only, no desktop stack ([Headless / Server](#headless--server)) |
 | Windows (amd64) | Supported |
 
@@ -130,8 +130,20 @@ The key for OpenAI (STT and cleanup) is resolved in this order; the first non-em
 Without `secret-tool` the keychain is skipped, and when no key is found the command exits with
 status 1 and names the two ways that are open: `vox transcribe: no API key — set OPENAI_API_KEY or
 use -api-key (keychain: no OS keychain available on this system: secret-tool is not installed)`.
+When `secret-tool` is there but cannot answer — no Secret Service on the bus, a prompt nobody can
+see — the message quotes its reason, and a helper that does not answer within 30 seconds is cut off.
 Prefer the environment of the calling service over the flag: a flag value is visible to every user on
 the machine via `ps`.
+
+On a desktop Linux with libsecret, the key can be stored once instead of exported in every shell —
+the same entry the desktop app writes from **Backends**, so `vox transcribe` finds it without a flag:
+
+```bash
+secret-tool store --label='vox: openai-api-key' service vox key openai-api-key   # prompts for the key
+```
+
+The key is looked up only when a backend needs it: a run with a local Whisper server and `-llm-backend
+none`, `-llm-backend ollama` or `--raw` never calls the keychain.
 
 The key is required whenever OpenAI does the STT or the cleanup. Only a local Whisper server
 (`-backend local -stt-url …`) together with `-llm-backend none`, `-llm-backend ollama` or `--raw`
@@ -285,7 +297,7 @@ Run through this list on each target platform. Items marked _(platform)_ apply o
 
 ### Start & Permissions
 
-- [ ] Binary starts without errors, no stderr noise beyond the banner.
+- [ ] _(desktop)_ Binary starts without errors, no stderr noise beyond the banner.
 - [ ] Tray icon appears and switches between Idle / Recording / Processing states.
 - [ ] First launch prompts for required permissions; Settings → Status reflects the current grant state.
 - [ ] _(macOS)_ Accessibility and Microphone prompts appear; revoking and relaunching re-prompts.
@@ -356,6 +368,19 @@ is meant to survive.
 - [ ] Diagnostics view lists steps and causes, filters to warnings/errors, and copies the log to the clipboard; warnings and errors appear live as they happen.
 - [ ] Insufficient credits → the yellow "Backend problem" banner appears with the billing message and stays until dismissed.
 - [ ] About view shows the correct version string.
+
+### Headless (Linux server)
+
+The desktop items above do not apply to `vox-headless_<version>_linux_<arch>.tar.gz`: it has no
+tray and no hotkey, and `vox` without a subcommand exits on purpose. Run this block on a machine
+without a desktop stack, with `secret-tool` absent.
+
+- [ ] `vox` without a subcommand prints the headless banner and exits with status 1; `vox --version` prints the release's version.
+- [ ] `ldd vox | grep -Ei 'gtk|webkit'` prints nothing — the binary links only libc, libm and the loader.
+- [ ] Without a key: `vox transcribe -f sample.m4a` exits with status 1, stdout stays empty, stderr says `no API key — set OPENAI_API_KEY or use -api-key (keychain: no OS keychain available on this system: secret-tool is not installed)`.
+- [ ] With `OPENAI_API_KEY` set: `vox transcribe -f sample.m4a -l de --json` prints exactly one JSON line with `text`, `language` and `backend` and exits with status 0.
+- [ ] `vox transcribe -f sample.wav -backend local -stt-url http://<whisper>:8080 -llm-backend none` runs without any key.
+- [ ] A `config.yaml` the service user cannot read makes the command exit with status 1 and name the file — it does not fall back to OpenAI.
 
 ### Platform-specific
 

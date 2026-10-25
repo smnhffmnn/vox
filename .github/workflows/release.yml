@@ -8,6 +8,12 @@ permissions:
   contents: write
 
 jobs:
+  # The release starts as a draft and goes public in the publish job, after
+  # every archive and SHA256SUMS are on it — a visitor never sees a release
+  # with half its assets. A failed build job leaves the draft in place: fix
+  # the cause, re-run the failed jobs (the uploads use --clobber), and
+  # publish runs. gh finds a draft by its tag name for upload, download and
+  # edit.
   create-release:
     runs-on: ubuntu-latest
     steps:
@@ -15,13 +21,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create release
+      - name: Create draft release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create ${{ github.ref_name }} \
             --title "${{ github.ref_name }}" \
-            --generate-notes
+            --generate-notes \
+            --draft
 
   build:
     needs: create-release
@@ -113,7 +120,9 @@ jobs:
 
       - name: Verify binary
         run: |
-          ./${{ matrix.binary }} --version | grep -q "vox"
+          # The version stamp must be the tag's: a binary that says "dev"
+          # was built without the ldflags and must not ship.
+          test "$(./${{ matrix.binary }} --version)" = "vox ${{ env.VERSION }}"
           if [ "${{ matrix.variant }}" = "headless" ]; then
             # The artifact's promise is a binary that runs on a server without
             # a desktop stack — fail the release if GTK or WebKit sneaked in.
@@ -193,8 +202,22 @@ jobs:
           gh release upload ${{ github.ref_name }} SHA256SUMS \
             --repo ${{ github.repository }} --clobber
 
+  publish:
+    needs: checksums
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit ${{ github.ref_name }} \
+            --repo ${{ github.repository }} --draft=false
+
+  # After publish: the formula points at the public download URLs, and the
+  # hashes it carries are checked against SHA256SUMS before they are written
+  # — a 404 page or a truncated download never becomes a formula hash.
   homebrew:
-    needs: [build, checksums]
+    needs: publish
     runs-on: ubuntu-latest
     steps:
       - name: Update Homebrew tap
@@ -204,14 +227,22 @@ jobs:
           VERSION=${GITHUB_REF_NAME#v}
 
           REPO="${{ github.repository }}"
-          FORMULA_URL="https://github.com/${REPO}/releases/download/${GITHUB_REF_NAME}/vox_${VERSION}_darwin_arm64.tar.gz"
-          CASK_URL="https://github.com/${REPO}/releases/download/${GITHUB_REF_NAME}/vox_${VERSION}_darwin_arm64_app.tar.gz"
+          DOWNLOAD="https://github.com/${REPO}/releases/download/${GITHUB_REF_NAME}"
+          FORMULA_FILE="vox_${VERSION}_darwin_arm64.tar.gz"
+          CASK_FILE="vox_${VERSION}_darwin_arm64_app.tar.gz"
+          FORMULA_URL="${DOWNLOAD}/${FORMULA_FILE}"
+          CASK_URL="${DOWNLOAD}/${CASK_FILE}"
 
-          curl -sL "$FORMULA_URL" -o formula.tar.gz
-          curl -sL "$CASK_URL" -o cask.tar.gz
+          curl -fsSLO "$FORMULA_URL"
+          curl -fsSLO "$CASK_URL"
+          curl -fsSLO "${DOWNLOAD}/SHA256SUMS"
+          for f in "$FORMULA_FILE" "$CASK_FILE"; do
+            grep -q "  ${f}\$" SHA256SUMS || { echo "${f} is not in SHA256SUMS"; exit 1; }
+          done
+          sha256sum -c --ignore-missing SHA256SUMS
 
-          FORMULA_SHA=$(sha256sum formula.tar.gz | cut -d' ' -f1)
-          CASK_SHA=$(sha256sum cask.tar.gz | cut -d' ' -f1)
+          FORMULA_SHA=$(sha256sum "$FORMULA_FILE" | cut -d' ' -f1)
+          CASK_SHA=$(sha256sum "$CASK_FILE" | cut -d' ' -f1)
 
           git clone https://x-access-token:${TAP_TOKEN}@github.com/smnhffmnn/homebrew-tap.git tap
           cd tap

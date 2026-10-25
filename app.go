@@ -106,7 +106,9 @@ func NewApp() *App {
 }
 
 // Start initializes the app (hotkey listener, dynamic data).
-// Called by the desktop lifecycle (ServiceStartup) or headless entry.
+// Called by the desktop lifecycle (ServiceStartup). The headless build never
+// constructs an App: vox transcribe drives the STT and cleanup packages
+// directly (transcribe.go), and vox without a subcommand exits.
 func (a *App) Start() {
 	// Push warnings and errors to the UI as they happen, so a cause is visible
 	// without opening a terminal — the Diagnostics view is built to show exactly
@@ -283,13 +285,16 @@ type StatusResponse struct {
 	HasKey  bool   `json:"has_key"`
 }
 
-// GetStatus returns the current daemon status.
+// GetStatus returns the current daemon status. HasKey is what the pipeline
+// will find — a key in the OS keychain or in OPENAI_API_KEY — not only the
+// keychain, so a key from the environment does not show as "Not configured"
+// while dictation works.
 func (a *App) GetStatus() StatusResponse {
 	return StatusResponse{
 		State:   a.getState(),
 		Uptime:  time.Since(a.started).Truncate(time.Second).String(),
 		Version: version,
-		HasKey:  keychain.HasKey("vox", "openai-api-key"),
+		HasKey:  a.HasAPIKey(openAIKeyName),
 	}
 }
 
@@ -762,18 +767,27 @@ func (a *App) TestLLM() TestResult {
 	return TestResult{OK: resp.StatusCode == 200, Status: resp.StatusCode}
 }
 
+// openAIKeyName is the keychain entry of the OpenAI key (service vox).
+const openAIKeyName = "openai-api-key"
+
 // SetAPIKey stores an API key in the OS keychain.
 func (a *App) SetAPIKey(key, value string) error {
 	return keychain.Set("vox", key, value)
 }
 
-// DeleteAPIKey removes an API key from the OS keychain.
+// DeleteAPIKey removes an API key from the OS keychain. A key that comes from
+// OPENAI_API_KEY is not touched — the environment is the caller's.
 func (a *App) DeleteAPIKey(key string) error {
 	return keychain.Delete("vox", key)
 }
 
-// HasAPIKey checks if an API key exists.
+// HasAPIKey reports whether the pipeline will find the key: for the OpenAI
+// key that is OPENAI_API_KEY or the OS keychain, in the order resolveAPIKey
+// reads them; any other key lives in the keychain only.
 func (a *App) HasAPIKey(key string) bool {
+	if key == openAIKeyName {
+		return a.resolveAPIKey() != ""
+	}
 	return keychain.HasKey("vox", key)
 }
 
