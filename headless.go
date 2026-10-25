@@ -21,7 +21,7 @@ Usage:
   vox --version                         Print version
   vox --help                            Show this help
 
-API key: -api-key, else OPENAI_API_KEY, else the OS keychain (secret-tool)
+API key: -api-key, else OPENAI_API_KEY, else the OS keychain (secret-tool on Linux)
 Config:  ~/.config/vox/config.yaml and dictionary.txt
 More info: https://github.com/smnhffmnn/vox
 `)

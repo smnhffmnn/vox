@@ -22,7 +22,8 @@ build: frontend
 	fi
 
 # Headless build (-tags nogui): transcribe CLI only, no Wails, no frontend,
-# no GTK/WebKit — what the release ships as vox-headless for Linux servers.
+# no GTK/WebKit. Same tags and ldflags as the release's vox-headless archive,
+# built for the host OS; output build/bin/vox-headless.
 headless:
 	go build -tags nogui $(LDFLAGS) -o build/bin/$(BINARY)-headless .
 

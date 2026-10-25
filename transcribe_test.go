@@ -75,7 +75,56 @@ func tmpAudioFile(t *testing.T) string {
 	return f
 }
 
+// isolateConfig points the config directory at an empty home, so a test
+// neither reads the developer's ~/.config/vox nor depends on it. Returns the
+// home directory for tests that want to plant a file there.
+func isolateConfig(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // Windows home
+	return home
+}
+
+// withTestKey makes the key resolution stop at the environment: no test may
+// reach the OS keychain, which on a developer Mac holds a real key.
+func withTestKey(t *testing.T) {
+	t.Helper()
+	isolateConfig(t)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+}
+
+// withNoKey leaves no key anywhere: environment empty, no keychain helper on
+// PATH (secret-tool, security), and the Windows credential file nowhere.
+func withNoKey(t *testing.T) {
+	t.Helper()
+	isolateConfig(t)
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("APPDATA", t.TempDir())
+}
+
+// runCapturing runs the transcribe command with stdout and stderr captured.
+func runCapturing(t *testing.T, args []string) (code int, stdout, stderr string) {
+	t.Helper()
+	oldOut, oldErr := os.Stdout, os.Stderr
+	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
+	os.Stdout, os.Stderr = wOut, wErr
+
+	code = runTranscribe(args)
+
+	wOut.Close()
+	wErr.Close()
+	os.Stdout, os.Stderr = oldOut, oldErr
+	out, _ := io.ReadAll(rOut)
+	errOut, _ := io.ReadAll(rErr)
+	return code, string(out), string(errOut)
+}
+
 func TestTranscribe_DefaultRunsCleanup(t *testing.T) {
+	withTestKey(t)
+
 	sttSrv := fakeSTTServer("ähm hallo welt")
 	defer sttSrv.Close()
 
@@ -113,6 +162,8 @@ func TestTranscribe_DefaultRunsCleanup(t *testing.T) {
 }
 
 func TestTranscribe_RawSkipsCleanup(t *testing.T) {
+	withTestKey(t)
+
 	sttSrv := fakeSTTServer("ähm hallo welt")
 	defer sttSrv.Close()
 
@@ -144,6 +195,8 @@ func TestTranscribe_RawSkipsCleanup(t *testing.T) {
 }
 
 func TestTranscribe_RawJSON(t *testing.T) {
+	withTestKey(t)
+
 	sttSrv := fakeSTTServer("hello world")
 	defer sttSrv.Close()
 
@@ -183,6 +236,8 @@ func TestTranscribe_RawJSON(t *testing.T) {
 }
 
 func TestTranscribe_CleanupJSON(t *testing.T) {
+	withTestKey(t)
+
 	sttSrv := fakeSTTServer("ähm hallo welt")
 	defer sttSrv.Close()
 
@@ -223,6 +278,8 @@ func TestTranscribe_CleanupJSON(t *testing.T) {
 }
 
 func TestTranscribe_LLMBackendNoneSkipsCleanup(t *testing.T) {
+	withTestKey(t)
+
 	sttSrv := fakeSTTServer("raw text here")
 	defer sttSrv.Close()
 
@@ -350,9 +407,96 @@ func TestLookupAPIKey_NothingWithKeychain(t *testing.T) {
 		t.Fatalf("got (%q, %v), want no key and an error", key, err)
 	}
 	msg := err.Error()
-	for _, want := range []string{"OPENAI_API_KEY", "-api-key", "keychain"} {
+	for _, want := range []string{"OPENAI_API_KEY", "-api-key", "store it in the OS keychain"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error should mention %q, got %q", want, msg)
 		}
+	}
+}
+
+// A keychain that answers without an error but with an empty value is "no
+// key" too — not a key of length zero.
+func TestLookupAPIKey_EmptyKeychainValue(t *testing.T) {
+	key, err := lookupAPIKey("", envWith(""), keychainWith(""))
+	if key != "" || err == nil {
+		t.Fatalf("got (%q, %v), want no key and an error", key, err)
+	}
+	if !strings.Contains(err.Error(), "store it in the OS keychain") {
+		t.Errorf("error should offer the keychain that answered, got %q", err)
+	}
+}
+
+// --- runTranscribe: key and config errors as the user sees them ---
+
+func TestTranscribe_NoKey_ErrorOutput(t *testing.T) {
+	withNoKey(t)
+	audioFile := tmpAudioFile(t)
+
+	code, out, errOut := runCapturing(t, []string{"-f", audioFile, "-backend", "openai"})
+
+	if code != 1 {
+		t.Fatalf("expected exit 1 without a key, got %d (stderr %q)", code, errOut)
+	}
+	if out != "" {
+		t.Errorf("stdout should stay empty on failure, got %q", out)
+	}
+	for _, want := range []string{"vox transcribe: no API key", "OPENAI_API_KEY", "-api-key"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr should contain %q, got %q", want, errOut)
+		}
+	}
+	if strings.Contains(errOut, "exec") {
+		t.Errorf("stderr should not leak an exec error, got %q", errOut)
+	}
+}
+
+// Local STT alone does not make the run keyless: the default cleanup is
+// OpenAI, and without the check the transcript would be posted there
+// unauthenticated. The desktop pipeline applies the same rule.
+func TestTranscribe_LocalSTT_OpenAICleanupNeedsKey(t *testing.T) {
+	withNoKey(t)
+	sttSrv := fakeSTTServer("hallo welt")
+	defer sttSrv.Close()
+	audioFile := tmpAudioFile(t)
+
+	code, _, errOut := runCapturing(t, []string{
+		"-f", audioFile,
+		"-backend", "local",
+		"-stt-url", sttSrv.URL,
+	})
+
+	if code != 1 {
+		t.Fatalf("expected exit 1: local STT with OpenAI cleanup and no key, got %d (stderr %q)", code, errOut)
+	}
+	if !strings.Contains(errOut, "no API key") {
+		t.Errorf("stderr should name the missing key, got %q", errOut)
+	}
+}
+
+// A config.yaml that exists but cannot be read must stop the run — falling
+// back to the defaults would turn a local setup into an upload to OpenAI.
+func TestTranscribe_UnreadableConfig(t *testing.T) {
+	withTestKey(t)
+	home := os.Getenv("HOME")
+	// A directory in place of the file: ReadFile fails on every platform.
+	if err := os.MkdirAll(filepath.Join(home, ".config", "vox", "config.yaml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sttSrv := fakeSTTServer("hallo welt")
+	defer sttSrv.Close()
+	audioFile := tmpAudioFile(t)
+
+	code, _, errOut := runCapturing(t, []string{
+		"-f", audioFile,
+		"-backend", "local",
+		"-stt-url", sttSrv.URL,
+		"--raw",
+	})
+
+	if code != 1 {
+		t.Fatalf("expected exit 1 for an unreadable config, got %d (stderr %q)", code, errOut)
+	}
+	if !strings.Contains(errOut, "config.yaml") {
+		t.Errorf("stderr should name the config file, got %q", errOut)
 	}
 }

@@ -55,8 +55,14 @@ func runTranscribe(args []string) int {
 		return 1
 	}
 
-	// Load config for defaults
-	cfg, _ := config.Load()
+	// Load config for defaults. A config.yaml that exists but cannot be read
+	// is a setup error, not "no config": falling back to the defaults would
+	// silently turn a local STT setup into an upload to OpenAI.
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vox transcribe: config.yaml exists but cannot be read: %v\n", err)
+		return 1
+	}
 
 	// Resolve language
 	language := cfg.Language
@@ -79,10 +85,28 @@ func runTranscribe(args []string) int {
 		sttServerURL = *sttURL
 	}
 
-	// Resolve API key. The local backend runs keyless; cleanup with the
-	// openai backend then falls back to the raw text below, as it always did.
+	// Resolve the cleanup backend before the key check — it needs the key
+	// as much as OpenAI STT does.
+	llmBackend := cfg.LLMBackend
+	if llmBackend == "" {
+		llmBackend = "openai"
+	}
+	if *llmBackendFlag != "" {
+		llmBackend = *llmBackendFlag
+	}
+	llmURL := cfg.LLMURL
+	if *llmURLFlag != "" {
+		llmURL = *llmURLFlag
+	}
+
+	// Resolve API key. Required whenever OpenAI does the STT or the cleanup;
+	// the desktop pipeline applies the same rule. Without the check, a local
+	// STT run would still post the transcript to api.openai.com for cleanup
+	// — unauthenticated, failing only after the text has left the machine.
 	key, keyErr := lookupAPIKey(*apiKey, os.Getenv, keychain.Get)
-	if key == "" && sttBackend != "local" {
+	sttNeedsKey := sttBackend != "local"
+	llmNeedsKey := !*raw && llmBackend != "none" && llmBackend != "ollama"
+	if key == "" && (sttNeedsKey || llmNeedsKey) {
 		fmt.Fprintf(os.Stderr, "vox transcribe: %v\n", keyErr)
 		return 1
 	}
@@ -103,19 +127,6 @@ func runTranscribe(args []string) int {
 
 	// LLM cleanup (default: on, --raw disables)
 	if !*raw {
-		llmBackend := cfg.LLMBackend
-		if llmBackend == "" {
-			llmBackend = "openai"
-		}
-		if *llmBackendFlag != "" {
-			llmBackend = *llmBackendFlag
-		}
-
-		llmURL := cfg.LLMURL
-		if *llmURLFlag != "" {
-			llmURL = *llmURLFlag
-		}
-
 		cleaner := cleanup.NewCleanerFromConfig(llmBackend, key, llmURL, cfg.LLMModel)
 		cleaned, err := cleaner.Cleanup(text, language, nil, dictionary)
 		if err != nil {
