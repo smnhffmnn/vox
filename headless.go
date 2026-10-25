@@ -21,7 +21,7 @@ Usage:
   vox --version                         Print version
   vox --help                            Show this help
 
-API key: -api-key, else OPENAI_API_KEY, else the OS keychain (secret-tool on Linux)
+API key: -api-key, else OPENAI_API_KEY, else the OS keychain (secret-tool on Linux, security on macOS)
 Config:  ~/.config/vox/config.yaml and dictionary.txt
 More info: https://github.com/smnhffmnn/vox
 `)
@@ -32,13 +32,3 @@ func runDesktop() {
 	fmt.Fprintln(os.Stderr, "      use 'vox transcribe -f <file>' for transcription")
 	os.Exit(1)
 }
-
-// headlessUI implements UIBridge as no-ops.
-type headlessUI struct{}
-
-func (h *headlessUI) SetTrayIcon(icon []byte)         {}
-func (h *headlessUI) SetTrayLabel(label string)       {}
-func (h *headlessUI) ShowOverlay(x, y int)            {}
-func (h *headlessUI) HideOverlay()                    {}
-func (h *headlessUI) EmitEvent(name string, data any) {}
-func (h *headlessUI) ShowWindow()                     {}

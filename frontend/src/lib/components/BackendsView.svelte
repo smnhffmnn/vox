@@ -135,7 +135,7 @@
       <h3>API Key</h3>
       <div class="key-status">
         <span class="dot" class:green={hasKey} class:red={!hasKey}></span>
-        <span class="key-label">{hasKey ? 'Configured in OS Keychain' : 'Not configured'}</span>
+        <span class="key-label">{hasKey ? 'Configured' : 'Not configured'}</span>
       </div>
       <div class="key-form">
         <input

@@ -8,9 +8,10 @@ import (
 
 // ErrUnavailable reports that this system has no OS keychain vox can reach:
 // the helper vox shells out to (secret-tool on Linux, security on macOS) is
-// not installed. A headless server is the normal case, not a fault — callers
-// treat it like "no key stored" and fall back to the environment or a flag,
-// and tell the user that the keychain is not one of the options here.
+// not installed. A headless server is the normal case, not a fault — the flag
+// and OPENAI_API_KEY are consulted before the keychain anyway, so callers
+// treat it like "no key stored" and tell the user that the keychain is not
+// one of the options here. Set and Delete return it as their error.
 var ErrUnavailable = errors.New("keychain: no OS keychain available on this system")
 
 // Get retrieves a secret from the OS keychain.
