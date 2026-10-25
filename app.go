@@ -806,14 +806,11 @@ func (a *App) ShowWindow() {
 
 // --- Internal Methods ---
 
+// resolveAPIKey is the desktop view of lookupAPIKey: no flag, so the order
+// is OPENAI_API_KEY, then the OS keychain. Empty means neither has a key.
 func (a *App) resolveAPIKey() string {
-	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
-		return key
-	}
-	if key, err := keychain.Get("vox", "openai-api-key"); err == nil && key != "" {
-		return key
-	}
-	return ""
+	key, _ := lookupAPIKey("", os.Getenv, keychain.Get)
+	return key
 }
 
 func (a *App) reloadDynamicData() {

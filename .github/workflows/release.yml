@@ -49,6 +49,22 @@ jobs:
             goarch: arm64
             binary: vox
             archive: tar.gz
+          # Headless (-tags nogui): the transcribe CLI without the desktop
+          # app, so without GTK/WebKit — for servers without a display.
+          # Archive name vox-headless_<version>_linux_<arch>.tar.gz, the
+          # binary inside is still called vox.
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            binary: vox
+            archive: tar.gz
+            variant: headless
+          - runner: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+            binary: vox
+            archive: tar.gz
+            variant: headless
     runs-on: ${{ matrix.runner }}
     defaults:
       run:
@@ -61,29 +77,52 @@ jobs:
           go-version-file: go.mod
 
       - uses: actions/setup-node@v4
+        if: matrix.variant != 'headless'
         with:
           node-version: 22
 
       - name: Set build variables
         run: |
           VERSION=${GITHUB_REF_NAME#v}
+          NAME=vox
+          BUILD_TAGS=""
+          if [ "${{ matrix.variant }}" = "headless" ]; then
+            NAME=vox-headless
+            BUILD_TAGS="-tags nogui"
+          fi
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
-          echo "ARCHIVE_BASE=vox_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}" >> $GITHUB_ENV
+          echo "BUILD_TAGS=${BUILD_TAGS}" >> $GITHUB_ENV
+          echo "ARCHIVE_BASE=${NAME}_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}" >> $GITHUB_ENV
 
       - name: Install Linux dependencies
-        if: matrix.goos == 'linux'
+        if: matrix.goos == 'linux' && matrix.variant != 'headless'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev
 
       - name: Build frontend
+        if: matrix.variant != 'headless'
         working-directory: frontend
         run: npm ci && npm run build
 
       - name: Build binary
         run: |
-          go build -ldflags "-s -w -X main.version=${{ env.VERSION }}" \
+          go build ${{ env.BUILD_TAGS }} \
+            -ldflags "-s -w -X main.version=${{ env.VERSION }}" \
             -o ${{ matrix.binary }} .
+
+      - name: Verify binary
+        run: |
+          ./${{ matrix.binary }} --version | grep -q "vox"
+          if [ "${{ matrix.variant }}" = "headless" ]; then
+            # The artifact's promise is a binary that runs on a server without
+            # a desktop stack — fail the release if GTK or WebKit sneaked in.
+            if ldd ./${{ matrix.binary }} | grep -Eiq 'gtk|webkit'; then
+              echo "headless binary links GTK/WebKit"
+              ldd ./${{ matrix.binary }}
+              exit 1
+            fi
+          fi
 
       - name: Create archive
         run: |

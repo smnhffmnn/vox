@@ -22,6 +22,7 @@ Cross-platform speech-to-text dictation tool. Press hotkey → speak → text ap
 |----------|--------|
 | macOS (arm64, amd64) | Tested |
 | Linux (Fedora, Wayland/X11) | Supported |
+| Linux headless (amd64, arm64) | Supported — `vox transcribe` only, no desktop stack ([Headless / Server](#headless--server)) |
 | Windows (amd64) | Supported |
 
 ## Installation
@@ -94,6 +95,61 @@ vox transcribe -f recording.wav --raw      # raw STT output only
 vox transcribe -f recording.wav -json      # JSON output
 ```
 
+## Headless / Server
+
+Every release ships `vox-headless_<version>_linux_<arch>.tar.gz` for `amd64` and `arm64`: the same
+code built with `-tags nogui`, without the desktop app — no tray, no hotkey, no settings window — and
+therefore without GTK or WebKit. It runs on a server without a display, and `vox transcribe` is the
+one thing it does; `vox` without a subcommand says so and exits with status 1. This is the build for
+a backend that transcribes one file per call.
+
+```bash
+curl -sL https://github.com/smnhffmnn/vox/releases/download/v<version>/vox-headless_<version>_linux_amd64.tar.gz | tar xz
+sudo install -m 755 vox /usr/local/bin/vox
+
+vox transcribe -f recording.m4a -l de --json
+```
+
+The archive is listed in the release's `SHA256SUMS` next to the desktop builds. The binary inside is
+called `vox`, so the command line is the same as on the desktop.
+
+### API key
+
+The key for OpenAI (STT and cleanup) is resolved in this order; the first non-empty one wins:
+
+1. `-api-key <key>` on the command line
+2. the environment variable `OPENAI_API_KEY`
+3. the OS keychain — on Linux through `secret-tool` (libsecret), which a server usually does not have
+
+Without `secret-tool` the keychain is skipped, and when no key is found the error names the two ways
+that are open: `no API key — set OPENAI_API_KEY or use -api-key (keychain: no OS keychain available on
+this system: secret-tool is not installed)`. Prefer the environment of the calling service over the
+flag: a flag value is visible to every user on the machine via `ps`. A local Whisper server
+(`-backend local -stt-url …`) and `-llm-backend none` or `ollama` need no key at all.
+
+### Configuration
+
+The headless build reads the same files as the desktop app, from `~/.config/vox/` of the user that
+runs it. What `vox transcribe` uses:
+
+| File | Used by `vox transcribe` |
+|------|--------------------------|
+| `config.yaml` | Yes — `language`, `stt_backend`, `stt_url`, `stt_model`, `llm_backend`, `llm_url`, `llm_model`; the flags of the same name override it per call |
+| `dictionary.txt` | Yes — shapes the Whisper prompt and the cleanup's preferred spellings |
+| `snippets.yaml`, `prompts/*.txt` | No — trigger expansion and app-context prompts are part of the desktop pipeline |
+| `history.jsonl`, `recordings/` | No — the CLI records nothing and writes no history |
+
+None of the files has to exist: without `config.yaml` the defaults apply (language `de`, OpenAI for
+STT and cleanup).
+
+### Build from source
+
+Only Go and a C compiler are needed (the audio library is cgo) — no Node, no Wails CLI, no GTK:
+
+```bash
+go build -tags nogui -ldflags "-s -w" -o vox .     # or: make headless
+```
+
 ## Configuration
 
 Most settings are manageable through the built-in UI; the retention keys below are edited in `config.yaml` directly. Config files are stored in `~/.config/vox/` on all platforms, Windows included (`%USERPROFILE%\.config\vox\`) — only the file-based API-key fallback lives under `%APPDATA%\vox\`:
@@ -139,7 +195,9 @@ much space the recordings actually use instead.
 ## Architecture
 
 ```
-main.go              Wails v3 app bootstrap + system tray
+main.go              Entry point: transcribe subcommand, --version, --help, else the desktop app
+desktop.go           Wails v3 app bootstrap + system tray (build tag !nogui)
+headless.go          Headless entry: usage text, no GUI (build tag nogui)
 app.go               App struct with all frontend bindings + recording pipeline
 icons_*.go           Tray icon generation (desktop/headless)
 internal/

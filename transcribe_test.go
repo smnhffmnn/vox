@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/smnhffmnn/vox/internal/keychain"
 )
 
 // fakeSTTServer returns a test server that echoes a fixed transcription.
@@ -260,5 +264,95 @@ func TestTranscribe_MissingFileFlag(t *testing.T) {
 	code := runTranscribe([]string{})
 	if code != 1 {
 		t.Errorf("expected exit 1 for missing -f flag, got %d", code)
+	}
+}
+
+// --- API key resolution ---
+
+// The keychain stubs stand in for a system with and without an OS keychain;
+// the real one is never consulted here, because on a developer machine it may
+// hold a real key and would make the "no key" cases pass or fail by accident.
+func keychainUnavailable(service, key string) (string, error) {
+	return "", fmt.Errorf("%w: secret-tool is not installed", keychain.ErrUnavailable)
+}
+
+func keychainWithout(service, key string) (string, error) {
+	return "", errors.New("keychain: key \"openai-api-key\" not found: exit status 1")
+}
+
+func keychainWith(value string) func(service, key string) (string, error) {
+	return func(service, key string) (string, error) { return value, nil }
+}
+
+func envWith(value string) func(string) string {
+	return func(name string) string {
+		if name == "OPENAI_API_KEY" {
+			return value
+		}
+		return ""
+	}
+}
+
+func TestLookupAPIKey_FlagWins(t *testing.T) {
+	key, err := lookupAPIKey("from-flag", envWith("from-env"), keychainWith("from-keychain"))
+	if err != nil || key != "from-flag" {
+		t.Errorf("got (%q, %v), want from-flag", key, err)
+	}
+}
+
+func TestLookupAPIKey_EnvBeforeKeychain(t *testing.T) {
+	key, err := lookupAPIKey("", envWith("from-env"), keychainWith("from-keychain"))
+	if err != nil || key != "from-env" {
+		t.Errorf("got (%q, %v), want from-env", key, err)
+	}
+}
+
+func TestLookupAPIKey_KeychainLast(t *testing.T) {
+	key, err := lookupAPIKey("", envWith(""), keychainWith("from-keychain"))
+	if err != nil || key != "from-keychain" {
+		t.Errorf("got (%q, %v), want from-keychain", key, err)
+	}
+}
+
+// A headless server has no secret-tool: the environment variable must still
+// be honoured, and the keychain's absence must not surface as an exec error.
+func TestLookupAPIKey_EnvWhenKeychainUnavailable(t *testing.T) {
+	key, err := lookupAPIKey("", envWith("from-env"), keychainUnavailable)
+	if err != nil || key != "from-env" {
+		t.Errorf("got (%q, %v), want from-env", key, err)
+	}
+}
+
+func TestLookupAPIKey_NothingHeadless(t *testing.T) {
+	key, err := lookupAPIKey("", envWith(""), keychainUnavailable)
+	if key != "" || err == nil {
+		t.Fatalf("got (%q, %v), want no key and an error", key, err)
+	}
+	msg := err.Error()
+	for _, want := range []string{"OPENAI_API_KEY", "-api-key", "secret-tool"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error should mention %q, got %q", want, msg)
+		}
+	}
+	for _, leak := range []string{"exec", "executable file not found"} {
+		if strings.Contains(msg, leak) {
+			t.Errorf("error should not leak %q, got %q", leak, msg)
+		}
+	}
+	if strings.Contains(msg, "store it in the OS keychain") {
+		t.Errorf("error must not offer the keychain when there is none, got %q", msg)
+	}
+}
+
+func TestLookupAPIKey_NothingWithKeychain(t *testing.T) {
+	key, err := lookupAPIKey("", envWith(""), keychainWithout)
+	if key != "" || err == nil {
+		t.Fatalf("got (%q, %v), want no key and an error", key, err)
+	}
+	msg := err.Error()
+	for _, want := range []string{"OPENAI_API_KEY", "-api-key", "keychain"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error should mention %q, got %q", want, msg)
+		}
 	}
 }

@@ -33,7 +33,7 @@ func runTranscribe(args []string) int {
 	raw := fs.Bool("raw", false, "Skip LLM cleanup, return raw STT output")
 	backend := fs.String("backend", "", "STT backend: openai (default) or local — overrides config")
 	sttURL := fs.String("stt-url", "", "URL for local Whisper server — overrides config")
-	apiKey := fs.String("api-key", "", "OpenAI API key — overrides env/keychain")
+	apiKey := fs.String("api-key", "", "OpenAI API key — overrides OPENAI_API_KEY and the OS keychain")
 	llmBackendFlag := fs.String("llm-backend", "", "LLM backend: openai, ollama, none — overrides config")
 	llmURLFlag := fs.String("llm-url", "", "LLM base URL — overrides config")
 
@@ -79,18 +79,11 @@ func runTranscribe(args []string) int {
 		sttServerURL = *sttURL
 	}
 
-	// Resolve API key
-	key := *apiKey
-	if key == "" {
-		key = os.Getenv("OPENAI_API_KEY")
-	}
-	if key == "" {
-		if k, err := keychain.Get("vox", "openai-api-key"); err == nil && k != "" {
-			key = k
-		}
-	}
+	// Resolve API key. The local backend runs keyless; cleanup with the
+	// openai backend then falls back to the raw text below, as it always did.
+	key, keyErr := lookupAPIKey(*apiKey, os.Getenv, keychain.Get)
 	if key == "" && sttBackend != "local" {
-		fmt.Fprintln(os.Stderr, "vox transcribe: no API key — set OPENAI_API_KEY, use -api-key, or configure via keychain")
+		fmt.Fprintf(os.Stderr, "vox transcribe: %v\n", keyErr)
 		return 1
 	}
 
@@ -150,4 +143,29 @@ func runTranscribe(args []string) int {
 	}
 
 	return 0
+}
+
+// lookupAPIKey resolves the OpenAI key: the flag wins, then OPENAI_API_KEY,
+// then the OS keychain. getenv and keychainGet are parameters so a test can
+// stage every combination without touching the real keychain — on a developer
+// Mac that one holds a real key.
+//
+// When nothing yields a key, the returned error names the ways that are open
+// on this system. On a headless server the keychain is usually not one of
+// them (no secret-tool), and the hint says so instead of offering it.
+func lookupAPIKey(flagKey string, getenv func(string) string, keychainGet func(service, key string) (string, error)) (string, error) {
+	if flagKey != "" {
+		return flagKey, nil
+	}
+	if k := getenv("OPENAI_API_KEY"); k != "" {
+		return k, nil
+	}
+	k, err := keychainGet("vox", "openai-api-key")
+	if err == nil && k != "" {
+		return k, nil
+	}
+	if errors.Is(err, keychain.ErrUnavailable) {
+		return "", fmt.Errorf("no API key — set OPENAI_API_KEY or use -api-key (%v)", err)
+	}
+	return "", errors.New("no API key — set OPENAI_API_KEY, use -api-key, or store it in the OS keychain")
 }
