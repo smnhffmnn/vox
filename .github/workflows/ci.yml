@@ -66,3 +66,18 @@ jobs:
         run: |
           ./${{ matrix.binary }} --version | grep -q "vox"
           echo "Binary verification passed"
+
+      # The headless build (-tags nogui) is a release artifact for Linux;
+      # build it here too so a change that breaks the tag fails the PR, not
+      # the release. The ldd check guards what the artifact promises: no
+      # desktop stack.
+      - name: Build (headless)
+        if: runner.os == 'Linux'
+        run: |
+          go build -tags nogui -o vox-headless .
+          ./vox-headless --version | grep -q "vox"
+          if ldd ./vox-headless | grep -Eiq 'gtk|webkit'; then
+            echo "headless binary links GTK/WebKit"
+            ldd ./vox-headless
+            exit 1
+          fi

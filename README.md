@@ -22,6 +22,7 @@ Cross-platform speech-to-text dictation tool. Press hotkey → speak → text ap
 |----------|--------|
 | macOS (arm64, amd64) | Tested |
 | Linux (Fedora, Wayland/X11) | Supported |
+| Linux headless (amd64, arm64) | Supported — `vox transcribe` only, no desktop stack ([Headless / Server](#headless--server)) |
 | Windows (amd64) | Supported |
 
 ## Installation
@@ -86,12 +87,90 @@ The binary is at `build/bin/vox`. On macOS, a `.app` bundle is created at `build
 
 ### CLI Transcribe
 
-`vox transcribe` transcribes audio files with LLM cleanup enabled by default (same pipeline as the desktop app). Use `--raw` to get the unprocessed STT output.
+`vox transcribe` transcribes audio files with LLM cleanup enabled by default — the same STT and cleanup as the desktop app, without snippets, per-app prompts and the silence check. Use `--raw` to get the unprocessed STT output.
 
 ```bash
 vox transcribe -f recording.wav            # transcribed + cleaned
 vox transcribe -f recording.wav --raw      # raw STT output only
 vox transcribe -f recording.wav -json      # JSON output
+```
+
+## Headless / Server
+
+From v0.8.0 on, every release ships `vox-headless_<version>_linux_<arch>.tar.gz` for `amd64` and
+`arm64`: the same code built with `-tags nogui`, without the desktop app — no tray, no hotkey, no
+settings window — and therefore without GTK or WebKit. It runs on a server without a display, and
+`vox transcribe` is the one thing it does; `vox` without a subcommand says so and exits with status 1.
+This is the build for a backend that transcribes one file per call.
+
+```bash
+VERSION=0.8.0 ARCH=amd64   # or arm64
+curl -fsSLO https://github.com/smnhffmnn/vox/releases/download/v$VERSION/vox-headless_${VERSION}_linux_$ARCH.tar.gz
+curl -fsSLO https://github.com/smnhffmnn/vox/releases/download/v$VERSION/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+tar xzf vox-headless_${VERSION}_linux_$ARCH.tar.gz vox
+sudo install -m 755 vox /usr/local/bin/vox
+
+vox transcribe -f recording.m4a -l de --json
+```
+
+`SHA256SUMS` lists the headless archives next to the desktop builds. The binary inside is called
+`vox`, so the command line is the same as on the desktop. It is linked against glibc and needs
+glibc 2.34 or newer (measured on the 25.10.2026 builds for both architectures: Debian 12+,
+Ubuntu 22.04+, RHEL 9+); it does not run on Alpine or other musl systems.
+
+### API key
+
+The key for OpenAI (STT and cleanup) is resolved in this order; the first non-empty one wins:
+
+1. `-api-key <key>` on the command line
+2. the environment variable `OPENAI_API_KEY`
+3. the OS keychain — on Linux through `secret-tool` (libsecret), which a server usually does not have
+
+Without `secret-tool` the keychain is skipped, and when no key is found the command exits with
+status 1 and names the two ways that are open: `vox transcribe: no API key — set OPENAI_API_KEY or
+use -api-key (keychain: no OS keychain available on this system: secret-tool is not installed)`.
+Prefer the environment of the calling service over the flag: a flag value is visible to every user on
+the machine via `ps`.
+
+The key is required whenever OpenAI does the STT or the cleanup. Only a local Whisper server
+(`-backend local -stt-url …`) together with `-llm-backend none`, `-llm-backend ollama` or `--raw`
+runs without a key. `-backend local` alone keeps the cleanup on OpenAI, so the transcript still leaves
+the machine and the key is still needed — the command says so before it sends anything.
+
+### Configuration
+
+The headless build looks in the same directory as the desktop app, `$HOME/.config/vox/` of the user
+that runs it — without `HOME` nothing is read and the defaults apply. What `vox transcribe` uses:
+
+| File | Used by `vox transcribe` |
+|------|--------------------------|
+| `config.yaml` | Yes — `language`, `stt_backend`, `stt_url`, `stt_model`, `llm_backend`, `llm_url`, `llm_model`. Per call, `-l`, `-backend`, `-stt-url`, `-llm-backend` and `-llm-url` override the first five; the two models are set in the file only |
+| `dictionary.txt` | Yes — shapes the Whisper prompt and the cleanup's preferred spellings |
+| `snippets.yaml`, `prompts/*.txt` | No — trigger expansion and app-context prompts are part of the desktop pipeline |
+| `history.jsonl`, `recordings/` | No — the CLI records nothing and writes no history |
+
+None of the files has to exist: without `config.yaml` the defaults apply (language `de`, OpenAI for
+STT and cleanup). A `config.yaml` that exists but cannot be read is an error, not a fallback: the
+command exits with status 1 instead of switching a local setup to the cloud.
+
+### Output and exit status
+
+stdout carries the result and nothing else: the text, or with `--json` exactly one JSON line with
+`text`, `language`, `backend` and, when the backend provided them, `segments`. Errors go to stderr
+with the prefix `vox transcribe: ` and exit status 1 — a missing file or key, an unreadable config, a
+failed transcription. A failed cleanup is not an error: the raw transcript is returned with exit
+status 0 and a warning on stderr (`cleanup failed, using raw text: …`), and the JSON does not say
+which of the two it is. A backend that must know reads stderr, or uses `--raw` and cleans up itself.
+
+### Build from source
+
+Go 1.25+ and a C compiler with libc headers (Debian: `build-essential`) are needed, because the audio
+library is cgo — but no Node, no Wails CLI, no GTK:
+
+```bash
+go build -tags nogui -ldflags "-s -w" -o vox .   # writes ./vox
+make headless                                     # same tags and ldflags as the release, writes build/bin/vox-headless
 ```
 
 ## Configuration
@@ -139,7 +218,9 @@ much space the recordings actually use instead.
 ## Architecture
 
 ```
-main.go              Wails v3 app bootstrap + system tray
+main.go              Entry point: transcribe subcommand, --version, --help, else the desktop app
+desktop.go           Wails v3 app bootstrap + system tray (build tag !nogui)
+headless.go          Headless entry: usage text, no GUI (build tag nogui)
 app.go               App struct with all frontend bindings + recording pipeline
 icons_*.go           Tray icon generation (desktop/headless)
 internal/

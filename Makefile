@@ -3,7 +3,7 @@ LDFLAGS   := -ldflags "-s -w -X main.version=$(VERSION)"
 BINARY  := vox
 WAILS3  := $(shell which wails3 2>/dev/null || echo $(HOME)/go/bin/wails3)
 
-.PHONY: build bindings frontend dev run tidy test clean
+.PHONY: build headless bindings frontend dev run tidy test clean
 
 # Generate Wails v3 bindings for frontend
 bindings:
@@ -20,6 +20,12 @@ build: frontend
 		cp build/bin/$(BINARY) build/bin/$(BINARY).app/Contents/MacOS/$(BINARY); \
 		echo "Updated $(BINARY).app bundle"; \
 	fi
+
+# Headless build (-tags nogui): transcribe CLI only, no Wails, no frontend,
+# no GTK/WebKit. Same tags and ldflags as the release's vox-headless archive,
+# built for the host OS; output build/bin/vox-headless.
+headless:
+	go build -tags nogui $(LDFLAGS) -o build/bin/$(BINARY)-headless .
 
 # Development: run frontend dev server + Go binary separately
 dev:
