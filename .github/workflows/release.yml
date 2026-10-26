@@ -10,10 +10,20 @@ permissions:
 jobs:
   # The release starts as a draft and goes public in the publish job, after
   # every archive and SHA256SUMS are on it — a visitor never sees a release
-  # with half its assets. A failed build job leaves the draft in place: fix
-  # the cause, re-run the failed jobs (the uploads use --clobber), and
-  # publish runs. gh finds a draft by its tag name for upload, download and
-  # edit.
+  # with half its assets. gh finds a draft by its tag name for upload,
+  # download and edit.
+  #
+  # When a build job fails, the draft stays:
+  # - Cause outside the repository (runner, network, token): re-run the
+  #   failed jobs. The uploads use --clobber; checksums, publish and homebrew
+  #   follow.
+  # - Cause that needs a commit: a re-run builds the same commit again. Move
+  #   the tag to the fixed commit and push it; create-release reuses the
+  #   draft, and the uploads replace its archives.
+  # A tag whose release is already published is never built again:
+  # create-release stops the run, so "Re-run all jobs" cannot replace
+  # published archives or rewrite their hashes. A homebrew job that failed
+  # after publish is re-run on its own (gh run rerun <id> --failed).
   create-release:
     runs-on: ubuntu-latest
     steps:
@@ -21,14 +31,38 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create draft release
+      - name: Create or reuse the draft release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
         run: |
-          gh release create ${{ github.ref_name }} \
-            --title "${{ github.ref_name }}" \
+          ERR="$RUNNER_TEMP/gh.err"
+          # GitHub accepts a draft for a tag that already has a published
+          # release, and any number of drafts per tag; gh then picks one of
+          # them for each upload. So the state is checked first. The tags
+          # endpoint returns published releases only.
+          if url=$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq .html_url 2>"$ERR"); then
+            echo "::error::${TAG} is already published (${url}) — not building it again"
+            exit 1
+          elif ! grep -q 'HTTP 404' "$ERR"; then
+            cat "$ERR"
+            exit 1
+          fi
+          # With the published case ruled out, a release gh finds is a draft
+          # from an earlier run of this tag.
+          if gh release view "$TAG" --repo "$REPO" --json isDraft >/dev/null 2>"$ERR"; then
+            echo "Reusing the draft release of ${TAG}"
+            exit 0
+          elif ! grep -qx 'release not found' "$ERR"; then
+            cat "$ERR"
+            exit 1
+          fi
+          gh release create "$TAG" --repo "$REPO" \
+            --title "$TAG" \
             --generate-notes \
-            --draft
+            --draft \
+            --target "$GITHUB_SHA"
 
   build:
     needs: create-release
@@ -233,11 +267,16 @@ jobs:
           FORMULA_URL="${DOWNLOAD}/${FORMULA_FILE}"
           CASK_URL="${DOWNLOAD}/${CASK_FILE}"
 
-          curl -fsSLO "$FORMULA_URL"
-          curl -fsSLO "$CASK_URL"
-          curl -fsSLO "${DOWNLOAD}/SHA256SUMS"
+          # Retried: the download URLs answer right after publish, but a
+          # short 404 or 5xx there must not fail the tap update.
+          for url in "$FORMULA_URL" "$CASK_URL" "${DOWNLOAD}/SHA256SUMS"; do
+            curl -fsSLO --retry 5 --retry-all-errors "$url"
+          done
+          # Exact name match: a file that SHA256SUMS does not list would be
+          # skipped by --ignore-missing and reach the formula unchecked.
           for f in "$FORMULA_FILE" "$CASK_FILE"; do
-            grep -q "  ${f}\$" SHA256SUMS || { echo "${f} is not in SHA256SUMS"; exit 1; }
+            awk -v f="$f" '$2 == f { found = 1 } END { exit !found }' SHA256SUMS \
+              || { echo "${f} is not in SHA256SUMS"; exit 1; }
           done
           sha256sum -c --ignore-missing SHA256SUMS
 

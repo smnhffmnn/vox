@@ -102,10 +102,11 @@ func runTranscribe(args []string) int {
 	// Resolve the API key only when OpenAI does the STT or the cleanup — a
 	// local Whisper server and Ollama never see it, and looking it up would
 	// shell out to the OS keychain for nothing. When it is needed, it is
-	// required up front; the desktop pipeline applies the same rule. Without
-	// the check, a local STT run would still post the transcript to
-	// api.openai.com for cleanup — unauthenticated, failing only after the
-	// text has left the machine.
+	// required up front. Without the check, a local STT run would still post
+	// the transcript to api.openai.com for cleanup — unauthenticated, failing
+	// only after the text has left the machine. The desktop pipeline requires
+	// the key up front too, but resolves it unconditionally and decides the
+	// need with its own backend checks (transcribeAndCleanup in app.go).
 	var key string
 	sttNeedsKey := sttBackend != "local"
 	llmNeedsKey := !*raw && llmBackend != "none" && llmBackend != "ollama"
@@ -168,12 +169,13 @@ func runTranscribe(args []string) int {
 // stage every combination without touching the real keychain — on a developer
 // Mac that one holds a real key.
 //
-// When nothing yields a key, the returned error names the ways that are open
-// on this system. On a headless server the keychain is usually not one of
-// them (no secret-tool), and the hint says so instead of offering it. A
-// keychain that was there but answered with an error — no Secret Service on
-// the bus, a helper that did not answer in time — is quoted after the hint,
-// so the reason is not lost; the keychain error stays wrapped for errors.Is.
+// When nothing yields a key, the returned error says how to provide one. On
+// a headless server there is usually no keychain (no secret-tool), and the
+// hint names only the flag and the environment instead of offering it. Where
+// a keychain helper is installed, the hint offers the keychain as well, and
+// whatever the keychain answered — no such key, no Secret Service on the bus,
+// a helper that did not answer in time — is quoted after it, so the reason is
+// not lost. The keychain error stays wrapped for errors.Is.
 func lookupAPIKey(flagKey string, getenv func(string) string, keychainGet func(service, key string) (string, error)) (string, error) {
 	if flagKey != "" {
 		return flagKey, nil

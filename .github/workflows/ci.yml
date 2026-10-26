@@ -60,11 +60,15 @@ jobs:
       - name: Build
         run: |
           VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           go build -ldflags "-s -w -X main.version=${VERSION}" -o ${{ matrix.binary }} .
 
+      # The same check release.yml runs on every archive: --version prints
+      # exactly the stamped version, so a change that breaks the stamp or
+      # writes to stdout at startup fails here and not at the tag.
       - name: Verify binary
         run: |
-          ./${{ matrix.binary }} --version | grep -q "vox"
+          test "$(./${{ matrix.binary }} --version)" = "vox ${VERSION}"
           echo "Binary verification passed"
 
   # The headless release artifact (-tags nogui, no GTK/WebKit) is built here
@@ -97,7 +101,8 @@ jobs:
       - name: Test (nogui)
         run: go test -tags nogui ./...
 
-      # Same command as release.yml's "Build binary" for the headless entries.
+      # Same go build flags as release.yml's "Build binary" for the headless
+      # entries; VERSION comes from git describe here and from the tag there.
       - name: Build (release command)
         run: |
           VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev)

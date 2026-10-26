@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { GetConfig, SaveConfig, TestSTT, TestLLM, SetAPIKey, DeleteAPIKey, HasAPIKey } from '../api'
-  import type { ConfigResponse, TestResult } from '../api'
+  import { GetConfig, SaveConfig, TestSTT, TestLLM, SetAPIKey, DeleteAPIKey, GetAPIKeyStatus } from '../api'
+  import type { APIKeyStatus, ConfigResponse, TestResult } from '../api'
 
   let cfg = $state<ConfigResponse | null>(null)
   let saving = $state(false)
@@ -16,21 +16,44 @@
   let llmTesting = $state(false)
   let llmResult = $state<TestResult | null>(null)
 
-  // API key
-  let hasKey = $state(false)
+  // API key. Two sources: OPENAI_API_KEY in the app's environment and the OS
+  // keychain. The environment's key wins, and only the keychain's can be
+  // saved or deleted here — so the view shows which one is in use and offers
+  // Delete for the keychain entry alone.
+  let keyStatus = $state<APIKeyStatus>({ environment: false, keychain: false })
+  let hasKey = $derived(keyStatus.environment || keyStatus.keychain)
+  let keyLabel = $derived(
+    keyStatus.environment
+      ? keyStatus.keychain
+        ? 'Configured from OPENAI_API_KEY — the key in the OS keychain is not used while it is set'
+        : 'Configured from OPENAI_API_KEY'
+      : keyStatus.keychain
+        ? 'Configured in OS keychain'
+        : 'Not configured',
+  )
   let newKey = $state('')
   let keySaving = $state(false)
   let keyMsg = $state('')
   let keyError = $state('')
 
+  // Ask the backend again instead of assuming the outcome: after a save or a
+  // delete the environment may still hold a key.
+  async function refreshKeyStatus() {
+    try {
+      keyStatus = await GetAPIKeyStatus()
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
   onMount(async () => {
     try {
       cfg = await GetConfig()
-      hasKey = await HasAPIKey('openai-api-key')
     } catch (e) {
       error = 'Failed to load config'
       console.error(e)
     }
+    await refreshKeyStatus()
   })
 
   async function save() {
@@ -83,10 +106,12 @@
     keyError = ''
     try {
       await SetAPIKey('openai-api-key', newKey.trim())
-      hasKey = true
       newKey = ''
-      keyMsg = 'API key saved'
-      setTimeout(() => (keyMsg = ''), 2000)
+      await refreshKeyStatus()
+      keyMsg = keyStatus.environment
+        ? 'API key saved to the OS keychain — OPENAI_API_KEY is set and is used instead'
+        : 'API key saved'
+      setTimeout(() => (keyMsg = ''), keyStatus.environment ? 5000 : 2000)
     } catch (e: any) {
       keyError = e?.message || 'Failed to save key'
     } finally {
@@ -100,8 +125,8 @@
     keyError = ''
     try {
       await DeleteAPIKey('openai-api-key')
-      hasKey = false
-      keyMsg = 'API key deleted'
+      await refreshKeyStatus()
+      keyMsg = 'API key deleted from the OS keychain'
       setTimeout(() => (keyMsg = ''), 2000)
     } catch (e: any) {
       keyError = e?.message || 'Failed to delete key'
@@ -135,7 +160,7 @@
       <h3>API Key</h3>
       <div class="key-status">
         <span class="dot" class:green={hasKey} class:red={!hasKey}></span>
-        <span class="key-label">{hasKey ? 'Configured' : 'Not configured'}</span>
+        <span class="key-label">{keyLabel}</span>
       </div>
       <div class="key-form">
         <input
@@ -147,7 +172,7 @@
         <button class="primary" onclick={saveKey} disabled={keySaving || !newKey.trim()}>
           Save Key
         </button>
-        {#if hasKey}
+        {#if keyStatus.keychain}
           <button class="danger" onclick={deleteKey} disabled={keySaving}>
             Delete Key
           </button>

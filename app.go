@@ -791,6 +791,28 @@ func (a *App) HasAPIKey(key string) bool {
 	return keychain.HasKey("vox", key)
 }
 
+// APIKeyStatus says where the OpenAI key comes from. Both can be true; the
+// pipeline then uses the environment's (resolveAPIKey).
+type APIKeyStatus struct {
+	// Environment: OPENAI_API_KEY is set in the app's environment. The app
+	// can neither change nor delete that key.
+	Environment bool `json:"environment"`
+	// Keychain: the OS keychain holds a non-empty key — the one SetAPIKey
+	// writes and DeleteAPIKey removes.
+	Keychain bool `json:"keychain"`
+}
+
+// GetAPIKeyStatus reports both sources of the OpenAI key, so the Backends view
+// can say which one is in use and offer Delete only for the keychain entry it
+// can actually remove.
+func (a *App) GetAPIKeyStatus() APIKeyStatus {
+	k, err := keychain.Get("vox", openAIKeyName)
+	return APIKeyStatus{
+		Environment: os.Getenv("OPENAI_API_KEY") != "",
+		Keychain:    err == nil && k != "",
+	}
+}
+
 // GetVersion returns the app version.
 func (a *App) GetVersion() string {
 	return version

@@ -416,8 +416,10 @@ func TestLookupAPIKey_NothingWithKeychain(t *testing.T) {
 }
 
 // A keychain that is there but could not be asked — secret-tool without a
-// Secret Service, a helper that did not answer in time — has a reason, and
-// the hint carries it instead of offering a keychain that does not work here.
+// Secret Service, a helper that did not answer in time — has a reason. The
+// hint still lists the keychain among the three ways (the helper is
+// installed; the cause may be passing, like a locked keyring) and quotes the
+// reason after them, so the reader sees why the keychain gave nothing.
 func TestLookupAPIKey_KeychainErrorIsQuoted(t *testing.T) {
 	cause := errors.New("keychain: lookup of \"openai-api-key\" failed: exit status 1: secret-tool: Cannot autolaunch D-Bus without X11 $DISPLAY")
 	keychainBroken := func(service, key string) (string, error) { return "", cause }
@@ -425,6 +427,9 @@ func TestLookupAPIKey_KeychainErrorIsQuoted(t *testing.T) {
 	key, err := lookupAPIKey("", envWith(""), keychainBroken)
 	if key != "" || err == nil {
 		t.Fatalf("got (%q, %v), want no key and an error", key, err)
+	}
+	if !strings.Contains(err.Error(), "store it in the OS keychain") {
+		t.Errorf("the hint should list the keychain, got %q", err)
 	}
 	if !strings.Contains(err.Error(), "Cannot autolaunch D-Bus") {
 		t.Errorf("error should quote the keychain's reason, got %q", err)
@@ -505,44 +510,62 @@ func TestTranscribe_LocalSTT_OpenAICleanupNeedsKey(t *testing.T) {
 // A run that needs no key — local STT, no OpenAI cleanup — must not consult
 // the OS keychain at all: on a server that would shell out to secret-tool for
 // nothing, on a desktop it may raise an unlock prompt for a key nobody uses.
-// The fake helper on PATH records whether it was called.
+// The README promises this for all three ways to keep the cleanup off OpenAI:
+// -llm-backend none, -llm-backend ollama and --raw. The fake helper on PATH
+// records whether it was called.
 func TestTranscribe_KeylessRunDoesNotTouchKeychain(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the Windows keychain is a file, not a helper")
 	}
-	isolateConfig(t)
-	t.Setenv("OPENAI_API_KEY", "")
 	helper := map[string]string{"linux": "secret-tool", "darwin": "security"}[runtime.GOOS]
 	if helper == "" {
 		t.Skipf("no keychain helper known for %s", runtime.GOOS)
 	}
-	dir := t.TempDir()
-	marker := filepath.Join(dir, "called")
-	script := "#!/bin/sh\n: > " + marker + "\nexit 1\n"
-	if err := os.WriteFile(filepath.Join(dir, helper), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir)
 
-	sttSrv := fakeSTTServer("hallo welt")
-	defer sttSrv.Close()
-	audioFile := tmpAudioFile(t)
+	llmSrv := fakeLLMServer()
+	defer llmSrv.Close()
 
-	code, out, errOut := runCapturing(t, []string{
-		"-f", audioFile,
-		"-backend", "local",
-		"-stt-url", sttSrv.URL,
-		"-llm-backend", "none",
-	})
+	for _, tc := range []struct {
+		name    string
+		cleanup []string
+		want    string
+	}{
+		{"llm-backend none", []string{"-llm-backend", "none"}, "hallo welt"},
+		{"raw", []string{"--raw"}, "hallo welt"},
+		{"llm-backend ollama", []string{"-llm-backend", "ollama", "-llm-url", llmSrv.URL}, "CLEANED: hallo welt"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateConfig(t)
+			t.Setenv("OPENAI_API_KEY", "")
+			dir := t.TempDir()
+			marker := filepath.Join(dir, "called")
+			script := "#!/bin/sh\n: > " + marker + "\nexit 1\n"
+			if err := os.WriteFile(filepath.Join(dir, helper), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir)
 
-	if code != 0 {
-		t.Fatalf("expected exit 0 for a keyless run, got %d (stderr %q)", code, errOut)
-	}
-	if out != "hallo welt" {
-		t.Errorf("expected the raw transcript, got %q", out)
-	}
-	if _, err := os.Stat(marker); err == nil {
-		t.Error("the keychain helper was called although no backend needs the key")
+			sttSrv := fakeSTTServer("hallo welt")
+			defer sttSrv.Close()
+			audioFile := tmpAudioFile(t)
+
+			args := append([]string{
+				"-f", audioFile,
+				"-backend", "local",
+				"-stt-url", sttSrv.URL,
+			}, tc.cleanup...)
+			code, out, errOut := runCapturing(t, args)
+
+			if code != 0 {
+				t.Fatalf("expected exit 0 for a keyless run, got %d (stderr %q)", code, errOut)
+			}
+			if out != tc.want {
+				t.Errorf("got %q, want %q", out, tc.want)
+			}
+			if _, err := os.Stat(marker); err == nil {
+				t.Error("the keychain helper was called although no backend needs the key")
+			}
+		})
 	}
 }
 

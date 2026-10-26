@@ -40,7 +40,8 @@ export function CopyToClipboard(text) {
 }
 
 /**
- * DeleteAPIKey removes an API key from the OS keychain.
+ * DeleteAPIKey removes an API key from the OS keychain. A key that comes from
+ * OPENAI_API_KEY is not touched — the environment is the caller's.
  * @param {string} key
  * @returns {$CancellablePromise<void>}
  */
@@ -49,12 +50,24 @@ export function DeleteAPIKey(key) {
 }
 
 /**
+ * GetAPIKeyStatus reports both sources of the OpenAI key, so the Backends view
+ * can say which one is in use and offer Delete only for the keychain entry it
+ * can actually remove.
+ * @returns {$CancellablePromise<$models.APIKeyStatus>}
+ */
+export function GetAPIKeyStatus() {
+    return $Call.ByID(2446048566).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
+    }));
+}
+
+/**
  * GetConfig returns the current configuration.
  * @returns {$CancellablePromise<$models.ConfigResponse>}
  */
 export function GetConfig() {
     return $Call.ByID(1200034045).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType0($result);
+        return $$createType1($result);
     }));
 }
 
@@ -64,7 +77,7 @@ export function GetConfig() {
  */
 export function GetDictionary() {
     return $Call.ByID(3258138775).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType1($result);
+        return $$createType2($result);
     }));
 }
 
@@ -75,7 +88,7 @@ export function GetDictionary() {
  */
 export function GetEntryAudio(id) {
     return $Call.ByID(297988749, id).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType2($result);
+        return $$createType3($result);
     }));
 }
 
@@ -85,7 +98,7 @@ export function GetEntryAudio(id) {
  */
 export function GetHistory() {
     return $Call.ByID(210907985).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType4($result);
+        return $$createType5($result);
     }));
 }
 
@@ -95,7 +108,7 @@ export function GetHistory() {
  */
 export function GetHistoryInfo() {
     return $Call.ByID(544859081).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType5($result);
+        return $$createType6($result);
     }));
 }
 
@@ -105,7 +118,7 @@ export function GetHistoryInfo() {
  */
 export function GetLogs() {
     return $Call.ByID(1743981476).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType7($result);
+        return $$createType8($result);
     }));
 }
 
@@ -115,7 +128,7 @@ export function GetLogs() {
  */
 export function GetPermissions() {
     return $Call.ByID(2898822425).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType8($result);
+        return $$createType9($result);
     }));
 }
 
@@ -125,17 +138,20 @@ export function GetPermissions() {
  */
 export function GetSnippets() {
     return $Call.ByID(2651092597).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType10($result);
+        return $$createType11($result);
     }));
 }
 
 /**
- * GetStatus returns the current daemon status.
+ * GetStatus returns the current daemon status. HasKey is what the pipeline
+ * will find — a key in the OS keychain or in OPENAI_API_KEY — not only the
+ * keychain, so a key from the environment does not show as "Not configured"
+ * while dictation works.
  * @returns {$CancellablePromise<$models.StatusResponse>}
  */
 export function GetStatus() {
     return $Call.ByID(1043986649).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType11($result);
+        return $$createType12($result);
     }));
 }
 
@@ -148,7 +164,9 @@ export function GetVersion() {
 }
 
 /**
- * HasAPIKey checks if an API key exists.
+ * HasAPIKey reports whether the pipeline will find the key: for the OpenAI
+ * key that is OPENAI_API_KEY or the OS keychain, in the order resolveAPIKey
+ * reads them; any other key lives in the keychain only.
  * @param {string} key
  * @returns {$CancellablePromise<boolean>}
  */
@@ -188,7 +206,7 @@ export function OpenMicrophoneSettings() {
  */
 export function RetryEntry(id, toClipboard) {
     return $Call.ByID(3466209775, id, toClipboard).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType12($result);
+        return $$createType13($result);
     }));
 }
 
@@ -266,7 +284,9 @@ export function Shutdown() {
 
 /**
  * Start initializes the app (hotkey listener, dynamic data).
- * Called by the desktop lifecycle (ServiceStartup) or headless entry.
+ * Called by the desktop lifecycle (ServiceStartup). The headless build never
+ * constructs an App: vox transcribe drives the STT and cleanup packages
+ * directly (transcribe.go), and vox without a subcommand exits.
  * @returns {$CancellablePromise<void>}
  */
 export function Start() {
@@ -279,7 +299,7 @@ export function Start() {
  */
 export function TestLLM() {
     return $Call.ByID(2685437664).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType13($result);
+        return $$createType14($result);
     }));
 }
 
@@ -289,22 +309,23 @@ export function TestLLM() {
  */
 export function TestSTT() {
     return $Call.ByID(3485148538).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType13($result);
+        return $$createType14($result);
     }));
 }
 
 // Private type creation functions
-const $$createType0 = $models.ConfigResponse.createFrom;
-const $$createType1 = $Create.Array($Create.Any);
-const $$createType2 = $models.AudioData.createFrom;
-const $$createType3 = $models.HistoryEntry.createFrom;
-const $$createType4 = $Create.Array($$createType3);
-const $$createType5 = $models.HistoryInfo.createFrom;
-const $$createType6 = $models.LogRecord.createFrom;
-const $$createType7 = $Create.Array($$createType6);
-const $$createType8 = permissions$0.Status.createFrom;
-const $$createType9 = config$0.Snippet.createFrom;
-const $$createType10 = $Create.Array($$createType9);
-const $$createType11 = $models.StatusResponse.createFrom;
-const $$createType12 = $models.RetryResult.createFrom;
-const $$createType13 = $models.TestResult.createFrom;
+const $$createType0 = $models.APIKeyStatus.createFrom;
+const $$createType1 = $models.ConfigResponse.createFrom;
+const $$createType2 = $Create.Array($Create.Any);
+const $$createType3 = $models.AudioData.createFrom;
+const $$createType4 = $models.HistoryEntry.createFrom;
+const $$createType5 = $Create.Array($$createType4);
+const $$createType6 = $models.HistoryInfo.createFrom;
+const $$createType7 = $models.LogRecord.createFrom;
+const $$createType8 = $Create.Array($$createType7);
+const $$createType9 = permissions$0.Status.createFrom;
+const $$createType10 = config$0.Snippet.createFrom;
+const $$createType11 = $Create.Array($$createType10);
+const $$createType12 = $models.StatusResponse.createFrom;
+const $$createType13 = $models.RetryResult.createFrom;
+const $$createType14 = $models.TestResult.createFrom;
