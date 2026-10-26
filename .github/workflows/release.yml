@@ -8,6 +8,22 @@ permissions:
   contents: write
 
 jobs:
+  # The release starts as a draft and goes public in the publish job, after
+  # every archive and SHA256SUMS are on it — a visitor never sees a release
+  # with half its assets. gh finds a draft by its tag name for upload,
+  # download and edit.
+  #
+  # When a build job fails, the draft stays:
+  # - Cause outside the repository (runner, network, token): re-run the
+  #   failed jobs. The uploads use --clobber; checksums, publish and homebrew
+  #   follow.
+  # - Cause that needs a commit: a re-run builds the same commit again. Move
+  #   the tag to the fixed commit and push it; create-release reuses the
+  #   draft, and the uploads replace its archives.
+  # A tag whose release is already published is never built again:
+  # create-release stops the run, so "Re-run all jobs" cannot replace
+  # published archives or rewrite their hashes. A homebrew job that failed
+  # after publish is re-run on its own (gh run rerun <id> --failed).
   create-release:
     runs-on: ubuntu-latest
     steps:
@@ -15,13 +31,38 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create release
+      - name: Create or reuse the draft release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
         run: |
-          gh release create ${{ github.ref_name }} \
-            --title "${{ github.ref_name }}" \
-            --generate-notes
+          ERR="$RUNNER_TEMP/gh.err"
+          # GitHub accepts a draft for a tag that already has a published
+          # release, and any number of drafts per tag; gh then picks one of
+          # them for each upload. So the state is checked first. The tags
+          # endpoint returns published releases only.
+          if url=$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq .html_url 2>"$ERR"); then
+            echo "::error::${TAG} is already published (${url}) — not building it again"
+            exit 1
+          elif ! grep -q 'HTTP 404' "$ERR"; then
+            cat "$ERR"
+            exit 1
+          fi
+          # With the published case ruled out, a release gh finds is a draft
+          # from an earlier run of this tag.
+          if gh release view "$TAG" --repo "$REPO" --json isDraft >/dev/null 2>"$ERR"; then
+            echo "Reusing the draft release of ${TAG}"
+            exit 0
+          elif ! grep -qx 'release not found' "$ERR"; then
+            cat "$ERR"
+            exit 1
+          fi
+          gh release create "$TAG" --repo "$REPO" \
+            --title "$TAG" \
+            --generate-notes \
+            --draft \
+            --target "$GITHUB_SHA"
 
   build:
     needs: create-release
@@ -113,7 +154,9 @@ jobs:
 
       - name: Verify binary
         run: |
-          ./${{ matrix.binary }} --version | grep -q "vox"
+          # The version stamp must be the tag's: a binary that says "dev"
+          # was built without the ldflags and must not ship.
+          test "$(./${{ matrix.binary }} --version)" = "vox ${{ env.VERSION }}"
           if [ "${{ matrix.variant }}" = "headless" ]; then
             # The artifact's promise is a binary that runs on a server without
             # a desktop stack — fail the release if GTK or WebKit sneaked in.
@@ -193,8 +236,22 @@ jobs:
           gh release upload ${{ github.ref_name }} SHA256SUMS \
             --repo ${{ github.repository }} --clobber
 
+  publish:
+    needs: checksums
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit ${{ github.ref_name }} \
+            --repo ${{ github.repository }} --draft=false
+
+  # After publish: the formula points at the public download URLs, and the
+  # hashes it carries are checked against SHA256SUMS before they are written
+  # — a 404 page or a truncated download never becomes a formula hash.
   homebrew:
-    needs: [build, checksums]
+    needs: publish
     runs-on: ubuntu-latest
     steps:
       - name: Update Homebrew tap
@@ -204,14 +261,27 @@ jobs:
           VERSION=${GITHUB_REF_NAME#v}
 
           REPO="${{ github.repository }}"
-          FORMULA_URL="https://github.com/${REPO}/releases/download/${GITHUB_REF_NAME}/vox_${VERSION}_darwin_arm64.tar.gz"
-          CASK_URL="https://github.com/${REPO}/releases/download/${GITHUB_REF_NAME}/vox_${VERSION}_darwin_arm64_app.tar.gz"
+          DOWNLOAD="https://github.com/${REPO}/releases/download/${GITHUB_REF_NAME}"
+          FORMULA_FILE="vox_${VERSION}_darwin_arm64.tar.gz"
+          CASK_FILE="vox_${VERSION}_darwin_arm64_app.tar.gz"
+          FORMULA_URL="${DOWNLOAD}/${FORMULA_FILE}"
+          CASK_URL="${DOWNLOAD}/${CASK_FILE}"
 
-          curl -sL "$FORMULA_URL" -o formula.tar.gz
-          curl -sL "$CASK_URL" -o cask.tar.gz
+          # Retried: the download URLs answer right after publish, but a
+          # short 404 or 5xx there must not fail the tap update.
+          for url in "$FORMULA_URL" "$CASK_URL" "${DOWNLOAD}/SHA256SUMS"; do
+            curl -fsSLO --retry 5 --retry-all-errors "$url"
+          done
+          # Exact name match: a file that SHA256SUMS does not list would be
+          # skipped by --ignore-missing and reach the formula unchecked.
+          for f in "$FORMULA_FILE" "$CASK_FILE"; do
+            awk -v f="$f" '$2 == f { found = 1 } END { exit !found }' SHA256SUMS \
+              || { echo "${f} is not in SHA256SUMS"; exit 1; }
+          done
+          sha256sum -c --ignore-missing SHA256SUMS
 
-          FORMULA_SHA=$(sha256sum formula.tar.gz | cut -d' ' -f1)
-          CASK_SHA=$(sha256sum cask.tar.gz | cut -d' ' -f1)
+          FORMULA_SHA=$(sha256sum "$FORMULA_FILE" | cut -d' ' -f1)
+          CASK_SHA=$(sha256sum "$CASK_FILE" | cut -d' ' -f1)
 
           git clone https://x-access-token:${TAP_TOKEN}@github.com/smnhffmnn/homebrew-tap.git tap
           cd tap

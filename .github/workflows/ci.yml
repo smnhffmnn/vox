@@ -60,24 +60,63 @@ jobs:
       - name: Build
         run: |
           VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           go build -ldflags "-s -w -X main.version=${VERSION}" -o ${{ matrix.binary }} .
+
+      # The same check release.yml runs on every archive: --version prints
+      # exactly the stamped version, so a change that breaks the stamp or
+      # writes to stdout at startup fails here and not at the tag.
+      - name: Verify binary
+        run: |
+          test "$(./${{ matrix.binary }} --version)" = "vox ${VERSION}"
+          echo "Binary verification passed"
+
+  # The headless release artifact (-tags nogui, no GTK/WebKit) is built here
+  # the way release.yml builds it — plain runner, no Node, no frontend, no
+  # GTK packages, the release ldflags — on both Linux architectures, so a
+  # change that breaks the tag fails the PR. Running the tests under the tag
+  # covers what the desktop job cannot: the nogui files and their build
+  # constraints. The ldd guard is the artifact's promise: no desktop stack.
+  headless:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    name: headless (linux ${{ matrix.arch }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Vet (nogui)
+        run: go vet -tags nogui ./...
+
+      - name: Test (nogui)
+        run: go test -tags nogui ./...
+
+      # Same go build flags as release.yml's "Build binary" for the headless
+      # entries; VERSION comes from git describe here and from the tag there.
+      - name: Build (release command)
+        run: |
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          go build -tags nogui \
+            -ldflags "-s -w -X main.version=${VERSION}" \
+            -o vox .
 
       - name: Verify binary
         run: |
-          ./${{ matrix.binary }} --version | grep -q "vox"
-          echo "Binary verification passed"
-
-      # The headless build (-tags nogui) is a release artifact for Linux;
-      # build it here too so a change that breaks the tag fails the PR, not
-      # the release. The ldd check guards what the artifact promises: no
-      # desktop stack.
-      - name: Build (headless)
-        if: runner.os == 'Linux'
-        run: |
-          go build -tags nogui -o vox-headless .
-          ./vox-headless --version | grep -q "vox"
-          if ldd ./vox-headless | grep -Eiq 'gtk|webkit'; then
+          test "$(./vox --version)" = "vox ${VERSION}"
+          if ldd ./vox | grep -Eiq 'gtk|webkit'; then
             echo "headless binary links GTK/WebKit"
-            ldd ./vox-headless
+            ldd ./vox
             exit 1
           fi
+          echo "Headless binary verification passed"

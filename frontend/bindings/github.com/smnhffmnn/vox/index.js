@@ -8,6 +8,7 @@ export {
 };
 
 export {
+    APIKeyStatus,
     AudioData,
     ConfigResponse,
     HistoryEntry,
