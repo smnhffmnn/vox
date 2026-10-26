@@ -21,7 +21,7 @@ Cross-platform speech-to-text dictation tool. Press hotkey → speak → text ap
 | Platform | Status |
 |----------|--------|
 | macOS (arm64) | Tested — the only macOS build in the releases and in Homebrew; an Intel Mac builds from source |
-| Linux (Fedora, Wayland/X11; amd64, arm64) | Supported — the desktop archives need GTK 3 and WebKitGTK 4.1 at runtime |
+| Linux (Fedora, Wayland/X11; amd64, arm64) | Supported — the desktop archives need GTK 3 and WebKitGTK 4.1 at runtime, `wl-clipboard` (Wayland) or `xclip`/`xsel` (X11) to put the text at the cursor, `wtype` or `ydotool` for keystroke output, and membership in the `input` group for the hotkey |
 | Linux headless (amd64, arm64) | Supported — `vox transcribe` only, no desktop stack ([Headless / Server](#headless--server)) |
 | Windows (amd64) | Supported |
 
@@ -135,8 +135,9 @@ see — the message quotes its reason, and a helper that does not answer within 
 Prefer the environment of the calling service over the flag: a flag value is visible to every user on
 the machine via `ps`.
 
-On a desktop Linux with libsecret, the key can be stored once instead of exported in every shell —
-the same entry the desktop app writes from **Backends**, so `vox transcribe` finds it without a flag:
+On a desktop Linux with `secret-tool` (Debian/Ubuntu: package `libsecret-tools`), the key can be
+stored once instead of exported in every shell — the same entry the desktop app writes from
+**Backends**, so `vox transcribe` finds it without a flag:
 
 ```bash
 secret-tool store --label='vox: openai-api-key' service vox key openai-api-key   # prompts for the key
@@ -294,10 +295,11 @@ frontend/
 Automated tests cover pure helpers, config parsing, history (retention, untrusted audio references, interrupted attempts), the diagnostic buffer, cleanup prompt assembly, and STT HTTP boundaries. Everything below requires a running binary, real hardware, or OS integration and must be smoke-tested by hand before a release.
 
 Run through this list on each target platform. Items marked _(platform)_ apply only to that OS.
+Everything up to **Headless (Linux server)** is for the desktop builds.
 
 ### Start & Permissions
 
-- [ ] _(desktop)_ Binary starts without errors, no stderr noise beyond the banner.
+- [ ] Binary starts without errors, no stderr noise beyond the banner.
 - [ ] Tray icon appears and switches between Idle / Recording / Processing states.
 - [ ] First launch prompts for required permissions; Settings → Status reflects the current grant state.
 - [ ] _(macOS)_ Accessibility and Microphone prompts appear; revoking and relaunching re-prompts.
@@ -324,6 +326,7 @@ Run through this list on each target platform. Items marked _(platform)_ apply o
 ### Transcription & Output
 
 - [ ] OpenAI backend: save API key → Test button turns green → real recording produces correct text.
+- [ ] Started with `OPENAI_API_KEY` set: **Backends** says "Configured from OPENAI_API_KEY" and offers Delete Key only while a key is also in the OS keychain; deleting that one leaves the environment's key in use, and the label still names OPENAI_API_KEY.
 - [ ] Local backend: point `stt_url` at a running Whisper server → Test button green → recording works offline.
 - [ ] Backend switch in Settings is applied to the next recording without a restart.
 - [ ] Text injection via clipboard restores the prior clipboard contents.
@@ -375,12 +378,12 @@ The desktop items above do not apply to `vox-headless_<version>_linux_<arch>.tar
 tray and no hotkey, and `vox` without a subcommand exits on purpose. Run this block on a machine
 without a desktop stack, with `secret-tool` absent.
 
-- [ ] `vox` without a subcommand prints the headless banner and exits with status 1; `vox --version` prints the release's version.
+- [ ] `vox` without a subcommand prints `vox: this is a headless build — desktop GUI is not available` and a hint on stderr, and exits with status 1; `vox --version` prints the release's version.
 - [ ] `ldd vox | grep -Ei 'gtk|webkit'` prints nothing — the binary links only libc, libm and the loader.
 - [ ] Without a key: `vox transcribe -f sample.m4a` exits with status 1, stdout stays empty, stderr says `no API key — set OPENAI_API_KEY or use -api-key (keychain: no OS keychain available on this system: secret-tool is not installed)`.
-- [ ] With `OPENAI_API_KEY` set: `vox transcribe -f sample.m4a -l de --json` prints exactly one JSON line with `text`, `language` and `backend` and exits with status 0.
+- [ ] With `OPENAI_API_KEY` set: `vox transcribe -f sample.m4a -l de --json` prints exactly one JSON line with `text`, `language`, `backend` (and `segments` with the default `whisper-1` model) and exits with status 0.
 - [ ] `vox transcribe -f sample.wav -backend local -stt-url http://<whisper>:8080 -llm-backend none` runs without any key.
-- [ ] A `config.yaml` the service user cannot read makes the command exit with status 1 and name the file — it does not fall back to OpenAI.
+- [ ] A `config.yaml` the service user cannot read makes the command exit with status 1 and name the file — it does not fall back to OpenAI. Test as a non-root user: `chmod 000` does not stop root.
 
 ### Platform-specific
 

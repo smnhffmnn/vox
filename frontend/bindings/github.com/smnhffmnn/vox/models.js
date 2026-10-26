@@ -7,6 +7,49 @@
 import { Create as $Create } from "@wailsio/runtime";
 
 /**
+ * APIKeyStatus says where the OpenAI key comes from. Both can be true; the
+ * pipeline then uses the environment's (resolveAPIKey).
+ */
+export class APIKeyStatus {
+    /**
+     * Creates a new APIKeyStatus instance.
+     * @param {Partial<APIKeyStatus>} [$$source = {}] - The source object to create the APIKeyStatus.
+     */
+    constructor($$source = {}) {
+        if (!("environment" in $$source)) {
+            /**
+             * Environment: OPENAI_API_KEY is set in the app's environment. The app
+             * can neither change nor delete that key.
+             * @member
+             * @type {boolean}
+             */
+            this["environment"] = false;
+        }
+        if (!("keychain" in $$source)) {
+            /**
+             * Keychain: the OS keychain holds a non-empty key — the one SetAPIKey
+             * writes and DeleteAPIKey removes.
+             * @member
+             * @type {boolean}
+             */
+            this["keychain"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new APIKeyStatus instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {APIKeyStatus}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new APIKeyStatus(/** @type {Partial<APIKeyStatus>} */($$parsedSource));
+    }
+}
+
+/**
  * AudioData carries a recording to the frontend as base64, so it can be played
  * or downloaded from the history view.
  */

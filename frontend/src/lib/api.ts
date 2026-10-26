@@ -30,6 +30,14 @@ export interface StatusResponse {
   has_key: boolean
 }
 
+/** Where the OpenAI key comes from; with both set, the environment's is used. */
+export interface APIKeyStatus {
+  /** OPENAI_API_KEY is set — the app can neither change nor delete that key. */
+  environment: boolean
+  /** The OS keychain holds a key — the one Save Key writes and Delete Key removes. */
+  keychain: boolean
+}
+
 export interface Snippet {
   trigger: string
   text: string
@@ -143,6 +151,7 @@ export {
   SetAPIKey,
   DeleteAPIKey,
   HasAPIKey,
+  GetAPIKeyStatus,
   GetVersion,
   ShowWindow,
   GetPermissions,

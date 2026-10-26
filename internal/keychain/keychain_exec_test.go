@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // With no helper on PATH — the headless-server case — every operation must
@@ -33,9 +34,10 @@ func TestAllOperations_HelperMissing(t *testing.T) {
 	}
 }
 
-// fakeHelper puts a shell script named like the keychain helper first on
-// PATH, so Get/Set/Delete run it instead of the real tool. body is the
-// script after the shebang.
+// fakeHelper puts a shell script named like the keychain helper alone on
+// PATH, so Get/Set/Delete run it instead of the real tool. body is the script
+// after the shebang; with nothing else on PATH it calls other programs by
+// absolute path (/bin/sleep, /bin/cat).
 func fakeHelper(t *testing.T, body string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -68,13 +70,55 @@ func TestGet_HelperTimesOut(t *testing.T) {
 	if errors.Is(err, ErrUnavailable) {
 		t.Errorf("a timeout is not a missing keychain, got %v", err)
 	}
-	for _, want := range []string{tool, "did not answer", "200ms"} {
+	// "lookup of … failed", not "not found": a helper that did not answer
+	// says nothing about whether the key exists.
+	for _, want := range []string{"lookup of", tool, "did not answer", "200ms"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error should contain %q, got %q", want, err)
 		}
 	}
 	if elapsed > 5*time.Second {
 		t.Errorf("Get took %v, the timeout did not cut the helper off", elapsed)
+	}
+}
+
+// Killing the helper does not end a grandchild that holds its output pipe —
+// here the shell's sleep, not exec'd. The wait for the pipe is bounded too,
+// so the call still returns shortly after the deadline instead of when the
+// grandchild exits.
+func TestGet_TimeoutWithGrandchildHoldingPipe(t *testing.T) {
+	fakeHelper(t, "/bin/sleep 10")
+	old := helperTimeout
+	helperTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { helperTimeout = old })
+
+	start := time.Now()
+	_, err := Get("vox-test", "k")
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("error should wrap context.DeadlineExceeded, got %v", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("Get took %v, a grandchild holding the pipe kept the call open", elapsed)
+	}
+}
+
+// A helper that printed the key and exited 0, but left a child holding
+// stdout, has answered: the key counts, and the call does not wait for the
+// child.
+func TestGet_AnswerWithGrandchildHoldingPipe(t *testing.T) {
+	fakeHelper(t, "printf 'sk-fake-value\\n'\n/bin/sleep 10 &\nexit 0")
+
+	start := time.Now()
+	key, err := Get("vox-test", "k")
+	elapsed := time.Since(start)
+
+	if err != nil || key != "sk-fake-value" {
+		t.Errorf("got (%q, %v), want the key the helper printed", key, err)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("Get took %v, it waited for the helper's child", elapsed)
 	}
 }
 
@@ -100,7 +144,8 @@ func TestGet_HelperFailsWithMessage(t *testing.T) {
 	}
 }
 
-// A silent non-zero exit is the plain "no such item" answer.
+// A silent non-zero exit is secret-tool's plain "no such item" answer
+// (security's is exit status 44, see keychain_darwin_test.go).
 func TestGet_HelperFailsSilently(t *testing.T) {
 	fakeHelper(t, "exit 1")
 
@@ -151,5 +196,29 @@ func TestHelperStderr_OneLineAndCut(t *testing.T) {
 	}
 	if got := helperStderr(errors.New("not an exit error")); got != "" {
 		t.Errorf("helperStderr of a non-exit error = %q, want empty", got)
+	}
+}
+
+// Helper messages are translated, so the cut can land inside a multi-byte
+// character; the result must stay valid UTF-8.
+func TestHelperStderr_CutKeepsUTF8(t *testing.T) {
+	msg := strings.Repeat("x", stderrLimit-1) + "Überprüfung fehlgeschlagen"
+	got := helperStderr(&exec.ExitError{Stderr: []byte(msg)})
+	if !utf8.ValidString(got) {
+		t.Errorf("helperStderr cut inside a character: %q", got)
+	}
+	if !strings.HasSuffix(got, "…") || len(got) > stderrLimit+len("…") {
+		t.Errorf("helperStderr = %d bytes %q, want at most %d plus the ellipsis", len(got), got, stderrLimit)
+	}
+}
+
+// GLib warnings come before the helper's own message; the message is the
+// cause and must not be cut away behind them.
+func TestHelperStderr_PrefersHelperMessage(t *testing.T) {
+	warning := "(" + tool + ":4242): GLib-GIO-WARNING **: 10:00:00.000: " + strings.Repeat("noise ", 40)
+	cause := tool + ": Cannot create an item in a locked collection"
+	stderr := warning + "\n" + warning + "\n" + cause + "\n"
+	if got := helperStderr(&exec.ExitError{Stderr: []byte(stderr)}); got != cause {
+		t.Errorf("helperStderr = %q, want the helper's own message %q", got, cause)
 	}
 }
